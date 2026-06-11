@@ -474,11 +474,7 @@ function MathInlineView({ node, updateAttributes, selected }: NodeViewProps) {
             onChange={(event) =>
               updateAttributes({ latex: event.currentTarget.value })
             }
-            onBlur={() => {
-              if (!showToolkit) {
-                closeEditing();
-              }
-            }}
+            onBlur={() => closeEditing()}
             onKeyDown={(event) => {
               if (event.key === "Enter" || event.key === "Escape") {
                 event.preventDefault();
@@ -510,7 +506,11 @@ function MathInlineView({ node, updateAttributes, selected }: NodeViewProps) {
           role="button"
           tabIndex={0}
           title="Click to edit formula"
-          onClick={() => setEditing(true)}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            event.stopPropagation();
+            setEditing(true);
+          }}
           onKeyDown={(event) => {
             if (event.key === "Enter") {
               setEditing(true);
@@ -533,6 +533,7 @@ function MathInlineView({ node, updateAttributes, selected }: NodeViewProps) {
 function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
   const latex = latexAttr(node.attrs.latex);
   const [editing, setEditing] = useState(() => !latex.trim());
+  const [toolkitOpen, setToolkitOpen] = useState(false);
   const textareaRef = useRef<HTMLTextAreaElement | null>(null);
   const rendered = useMemo(() => renderKatex(latex, true), [latex]);
 
@@ -542,6 +543,11 @@ function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
   );
   const insert = useMathField(textareaRef, latex, setLatex);
 
+  const closeEditing = useCallback(() => {
+    setToolkitOpen(false);
+    setEditing(false);
+  }, []);
+
   useEffect(() => {
     if (editing) {
       textareaRef.current?.focus();
@@ -550,31 +556,28 @@ function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
 
   return (
     <NodeViewWrapper
-      className={`local-block math-block ${selected ? "is-selected" : ""}`}
+      as="div"
+      className={`math-display-block ${selected ? "is-selected" : ""} ${
+        editing ? "is-editing" : ""
+      }`}
       contentEditable={false}
       data-type="math-block"
     >
-      <div className="block-heading">
-        <span className="block-icon">
-          <SquareSigma size={16} />
-        </span>
-        <span className="math-block-label">Equation</span>
-        <button
-          className="math-edit-toggle"
-          type="button"
-          onClick={() => setEditing((value) => !value)}
-        >
-          {editing ? "Preview" : "Edit"}
-        </button>
-      </div>
-
       <div
-        className="math-preview"
+        className="math-display"
         role="button"
         tabIndex={0}
-        onClick={() => setEditing(true)}
+        title="Click to edit equation"
+        // Open on mousedown and stop ProseMirror from grabbing focus, which
+        // would otherwise blur the editor field and close it immediately.
+        onMouseDown={(event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          setEditing(true);
+        }}
         onKeyDown={(event) => {
           if (event.key === "Enter") {
+            event.preventDefault();
             setEditing(true);
           }
         }}
@@ -584,25 +587,51 @@ function MathBlockView({ node, updateAttributes, selected }: NodeViewProps) {
         ) : rendered.html ? (
           <span dangerouslySetInnerHTML={{ __html: rendered.html }} />
         ) : (
-          <span className="math-empty">Click to add a formula</span>
+          <span className="math-empty">Click to add an equation</span>
         )}
       </div>
 
       {editing && (
-        <>
-          <MathToolkit onInsert={insert} />
-          <textarea
-            ref={textareaRef}
-            aria-label="Equation (LaTeX)"
-            className="math-source"
-            value={latex}
-            spellCheck={false}
-            placeholder={"\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}"}
-            onChange={(event) =>
-              updateAttributes({ latex: event.currentTarget.value })
-            }
-          />
-        </>
+        <div className="math-editor-pop">
+          <div className="math-editor-row">
+            <textarea
+              ref={textareaRef}
+              aria-label="Equation (LaTeX)"
+              className="math-source"
+              value={latex}
+              spellCheck={false}
+              placeholder={"\\int_0^\\infty e^{-x^2}\\,dx = \\frac{\\sqrt{\\pi}}{2}"}
+              onChange={(event) =>
+                updateAttributes({ latex: event.currentTarget.value })
+              }
+              onBlur={() => closeEditing()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  closeEditing();
+                }
+              }}
+            />
+            <button
+              type="button"
+              className={`math-toolkit-trigger block ${
+                toolkitOpen ? "is-active" : ""
+              }`}
+              title="Math toolkit"
+              aria-label="Math toolkit"
+              onMouseDown={(event) => {
+                event.preventDefault();
+                setToolkitOpen((value) => !value);
+              }}
+            >
+              <SquareSigma size={15} />
+            </button>
+          </div>
+          {toolkitOpen && <MathToolkit onInsert={insert} />}
+          <div className="math-editor-hint">
+            Press Esc or click away when you&apos;re done.
+          </div>
+        </div>
       )}
     </NodeViewWrapper>
   );

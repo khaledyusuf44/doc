@@ -795,55 +795,73 @@ button {
   width: 100%;
 }
 
-.math-block-label {
-  font-size: 14px;
-  font-weight: 760;
+/* Block equation: a clean centered formula that reads as part of the doc,
+   not a card. The editor only appears on click. */
+.math-display-block {
+  margin: 1.1rem 0;
+  position: relative;
 }
 
-.math-edit-toggle {
-  background: #ffffff;
-  border: 1px solid var(--line);
+.math-display {
   border-radius: 8px;
-  color: var(--muted-strong);
-  font-size: 12px;
-  font-weight: 640;
-  margin-left: auto;
-  padding: 4px 12px;
-}
-
-.math-edit-toggle:hover {
-  border-color: var(--line-strong);
-}
-
-.math-preview {
-  align-items: center;
-  background: #ffffff;
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  cursor: text;
-  display: flex;
-  justify-content: center;
-  min-height: 60px;
+  cursor: pointer;
   overflow-x: auto;
-  padding: 14px 16px;
+  padding: 6px 8px;
+  text-align: center;
 }
 
-.math-preview .katex-display {
+.math-display:hover {
+  background: rgba(37, 99, 235, 0.05);
+}
+
+.math-display-block.is-editing .math-display {
+  background: var(--accent-soft);
+}
+
+.math-display-block.is-selected .math-display {
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.18);
+}
+
+.math-display .katex-display {
   margin: 0;
+}
+
+.math-editor-pop {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  margin: 8px auto 0;
+  max-width: 640px;
+  padding: 10px;
+}
+
+.math-editor-row {
+  align-items: stretch;
+  display: flex;
+  gap: 0;
 }
 
 .math-source {
   background: #0f172a;
   border: 1px solid var(--line-strong);
-  border-radius: 8px;
+  border-radius: 8px 0 0 8px;
+  border-right: none;
   color: #e2e8f0;
+  flex: 1;
   font-family: var(--font-geist-mono), ui-monospace, monospace;
   font-size: 13px;
-  margin-top: 10px;
-  min-height: 84px;
+  min-height: 72px;
   padding: 10px 12px;
   resize: vertical;
   width: 100%;
+}
+
+.math-editor-hint {
+  color: var(--muted);
+  font-size: 11px;
+  margin-top: 8px;
+  text-align: center;
 }
 
 .math-empty {
@@ -970,6 +988,17 @@ button {
 
 .math-toolkit-trigger.is-active {
   background: var(--accent);
+}
+
+.math-toolkit-trigger.block {
+  border-color: var(--line-strong);
+  border-radius: 0 8px 8px 0;
+  padding: 0 10px;
+}
+
+.math-toolkit-trigger.block.is-active {
+  background: var(--accent);
+  border-color: var(--accent);
 }
 
 .math-inline-popover {
