@@ -1,6 +1,7 @@
 "use client";
 
 import { ChartBlock, SketchBlock } from "@/components/editor-blocks";
+import { MathBlock, MathInline } from "@/components/math-blocks";
 import type { Content, JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import Highlight from "@tiptap/extension-highlight";
@@ -39,6 +40,8 @@ import {
   Redo2,
   Save,
   Search,
+  Sigma,
+  SquareSigma,
   Table2,
   Trash2,
   Underline as UnderlineIcon,
@@ -90,6 +93,16 @@ const SKETCH_CONTENT: Content = {
 };
 
 const SKETCH_INSERT: Content = [SKETCH_CONTENT, { type: "paragraph" }];
+
+const MATH_INLINE_INSERT: Content = {
+  type: "mathInline",
+  attrs: { latex: "" },
+};
+
+const MATH_BLOCK_INSERT: Content = [
+  { type: "mathBlock", attrs: { latex: "" } },
+  { type: "paragraph" },
+];
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -354,6 +367,23 @@ function EditorToolbar({
           label="Sketch"
           onClick={() => editor?.chain().focus().insertContent(SKETCH_INSERT).run()}
         />
+        <ToolbarButton
+          active={editor?.isActive("mathInline")}
+          disabled={disabled}
+          icon={Sigma}
+          label="Inline formula"
+          onClick={() =>
+            editor?.chain().focus().insertContent(MATH_INLINE_INSERT).run()
+          }
+        />
+        <ToolbarButton
+          disabled={disabled}
+          icon={SquareSigma}
+          label="Equation block"
+          onClick={() =>
+            editor?.chain().focus().insertContent(MATH_BLOCK_INSERT).run()
+          }
+        />
       </ToolbarGroup>
 
       <ToolbarGroup>
@@ -397,6 +427,26 @@ export default function DocApp() {
         const chartTitle = element.getAttribute("data-title") ?? "Chart";
         const data = element.getAttribute("data-chart-data") ?? "";
         return `\n\n:::chart ${chartTitle}\n${data}\n:::\n\n`;
+      },
+    });
+
+    service.addRule("mathInline", {
+      filter: (node) =>
+        node.nodeType === 1 &&
+        (node as HTMLElement).getAttribute("data-type") === "math-inline",
+      replacement: (_content, node) => {
+        const latex = (node as HTMLElement).getAttribute("data-latex") ?? "";
+        return latex.trim() ? `$${latex.trim()}$` : "";
+      },
+    });
+
+    service.addRule("mathBlock", {
+      filter: (node) =>
+        node.nodeType === 1 &&
+        (node as HTMLElement).getAttribute("data-type") === "math-block",
+      replacement: (_content, node) => {
+        const latex = (node as HTMLElement).getAttribute("data-latex") ?? "";
+        return latex.trim() ? `\n\n$$\n${latex.trim()}\n$$\n\n` : "";
       },
     });
 
@@ -450,6 +500,8 @@ export default function DocApp() {
       Highlight,
       ChartBlock,
       SketchBlock,
+      MathInline,
+      MathBlock,
     ],
     [],
   );

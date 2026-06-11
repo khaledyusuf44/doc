@@ -795,6 +795,94 @@ button {
   width: 100%;
 }
 
+.math-block-label {
+  font-size: 14px;
+  font-weight: 760;
+}
+
+.math-edit-toggle {
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 640;
+  margin-left: auto;
+  padding: 4px 12px;
+}
+
+.math-edit-toggle:hover {
+  border-color: var(--line-strong);
+}
+
+.math-preview {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  cursor: text;
+  display: flex;
+  justify-content: center;
+  min-height: 60px;
+  overflow-x: auto;
+  padding: 14px 16px;
+}
+
+.math-preview .katex-display {
+  margin: 0;
+}
+
+.math-source {
+  background: #0f172a;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  color: #e2e8f0;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  margin-top: 10px;
+  min-height: 84px;
+  padding: 10px 12px;
+  resize: vertical;
+  width: 100%;
+}
+
+.math-empty {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.math-error {
+  color: var(--danger);
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 12px;
+}
+
+.math-inline {
+  border-radius: 4px;
+  cursor: pointer;
+  padding: 0 1px;
+}
+
+.math-inline.is-selected {
+  background: var(--accent-soft);
+  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+}
+
+.math-inline .math-empty {
+  border-bottom: 1px dashed var(--line-strong);
+}
+
+.math-inline-input {
+  background: #0f172a;
+  border: 1px solid var(--accent);
+  border-radius: 5px;
+  color: #e2e8f0;
+  font-family: var(--font-geist-mono), ui-monospace, monospace;
+  font-size: 13px;
+  padding: 1px 6px;
+  width: 12ch;
+}
+
 .boot-error {
   background: #fff1f1;
   border: 1px solid #fecaca;
