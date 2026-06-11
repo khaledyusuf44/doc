@@ -883,6 +883,114 @@ button {
   width: 12ch;
 }
 
+.math-toolkit {
+  background: #f3f5f2;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  margin-top: 10px;
+  padding: 8px;
+}
+
+.math-toolkit-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.math-toolkit-tabs button {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  color: var(--muted-strong);
+  font-size: 12px;
+  font-weight: 620;
+  padding: 3px 10px;
+}
+
+.math-toolkit-tabs button:hover {
+  background: #ffffff;
+}
+
+.math-toolkit-tabs button.is-active {
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.math-toolkit-grid {
+  display: grid;
+  gap: 5px;
+  grid-template-columns: repeat(auto-fill, minmax(46px, 1fr));
+}
+
+.math-toolkit.is-compact .math-toolkit-grid {
+  grid-template-columns: repeat(auto-fill, minmax(40px, 1fr));
+}
+
+.math-toolkit-key {
+  align-items: center;
+  background: #ffffff;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--foreground);
+  cursor: pointer;
+  display: flex;
+  justify-content: center;
+  min-height: 36px;
+  overflow: hidden;
+  padding: 4px;
+}
+
+.math-toolkit-key:hover {
+  background: var(--accent-soft);
+  border-color: #8cb6ff;
+}
+
+.math-toolkit-key .katex {
+  font-size: 0.95em;
+}
+
+.math-inline-edit {
+  display: inline-flex;
+  position: relative;
+  vertical-align: middle;
+}
+
+.math-toolkit-trigger {
+  align-items: center;
+  background: #0f172a;
+  border: 1px solid var(--accent);
+  border-left: none;
+  border-radius: 0 5px 5px 0;
+  color: #e2e8f0;
+  display: inline-flex;
+  justify-content: center;
+  padding: 0 5px;
+}
+
+.math-toolkit-trigger.is-active {
+  background: var(--accent);
+}
+
+.math-inline-popover {
+  background: var(--panel);
+  border: 1px solid var(--line-strong);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  left: 0;
+  max-width: 360px;
+  min-width: 300px;
+  padding: 4px;
+  position: absolute;
+  top: calc(100% + 6px);
+  z-index: 30;
+}
+
+.math-inline-popover .math-toolkit {
+  border: none;
+  margin-top: 0;
+}
+
 .boot-error {
   background: #fff1f1;
   border: 1px solid #fecaca;
