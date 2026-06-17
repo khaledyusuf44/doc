@@ -12,19 +12,24 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import TextAlign from "@tiptap/extension-text-align";
+import { FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import StarterKit from "@tiptap/starter-kit";
 import {
   AlignCenter,
   AlignLeft,
   AlignRight,
+  ArrowDownToLine,
+  ArrowUpToLine,
   BarChart3,
   Bold,
   BookOpen,
   Brush,
   CheckSquare,
+  Clock3,
   Code2,
   FilePlus2,
+  Gauge,
   Heading1,
   Heading2,
   Highlighter,
@@ -33,9 +38,11 @@ import {
   Link2,
   List,
   ListOrdered,
+  ListTree,
   Loader2,
   PanelLeftClose,
   PanelLeftOpen,
+  Pilcrow,
   Quote,
   Redo2,
   Save,
@@ -69,9 +76,30 @@ type StoredDoc = DocMeta & {
 
 type SaveState = "loading" | "dirty" | "saving" | "saved" | "error";
 
+type DocHeading = {
+  id: string;
+  level: number;
+  position: number;
+  text: string;
+};
+
+type DocStats = {
+  characters: number;
+  headings: DocHeading[];
+  readingMinutes: number;
+  words: number;
+};
+
 const EMPTY_CONTENT: JSONContent = {
   type: "doc",
   content: [{ type: "paragraph" }],
+};
+
+const EMPTY_STATS: DocStats = {
+  characters: 0,
+  headings: [],
+  readingMinutes: 0,
+  words: 0,
 };
 
 const CHART_CONTENT: Content = {
@@ -104,6 +132,16 @@ const MATH_BLOCK_INSERT: Content = [
   { type: "paragraph" },
 ];
 
+const FONT_FAMILIES = [
+  { label: "Sans", value: "" },
+  { label: "Serif", value: "Georgia, serif" },
+  { label: "Mono", value: "var(--font-geist-mono), monospace" },
+  { label: "Arial", value: "Arial, Helvetica, sans-serif" },
+  { label: "Times", value: "'Times New Roman', Times, serif" },
+];
+
+const FONT_SIZES = ["12", "14", "16", "18", "20", "24", "28", "32", "40"];
+
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
 }
@@ -133,6 +171,41 @@ function sortDocs(docs: DocMeta[]) {
   return [...docs].sort(
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
+}
+
+function readEditorStats(editor: Editor | null): DocStats {
+  if (!editor) {
+    return EMPTY_STATS;
+  }
+
+  const text = editor.getText({ blockSeparator: " " }).trim();
+  const words = text ? text.split(/\s+/).filter(Boolean).length : 0;
+  const headings: DocHeading[] = [];
+
+  editor.state.doc.descendants((node, position) => {
+    if (node.type.name !== "heading") {
+      return;
+    }
+
+    const headingText = node.textContent.replace(/\s+/g, " ").trim();
+    if (!headingText) {
+      return;
+    }
+
+    headings.push({
+      id: `${position}-${headingText}`,
+      level: Number(node.attrs.level) || 1,
+      position: position + 1,
+      text: headingText,
+    });
+  });
+
+  return {
+    characters: text.replace(/\s/g, "").length,
+    headings,
+    readingMinutes: words ? Math.max(1, Math.ceil(words / 220)) : 0,
+    words,
+  };
 }
 
 function ToolbarButton({
@@ -171,6 +244,54 @@ function ToolbarGroup({ children }: { children: React.ReactNode }) {
   return <div className="tool-group">{children}</div>;
 }
 
+function currentBlockStyle(editor: Editor | null) {
+  if (!editor) {
+    return "paragraph";
+  }
+
+  if (editor.isActive("heading", { level: 1 })) return "heading-1";
+  if (editor.isActive("heading", { level: 2 })) return "heading-2";
+  if (editor.isActive("heading", { level: 3 })) return "heading-3";
+  if (editor.isActive("blockquote")) return "blockquote";
+  if (editor.isActive("codeBlock")) return "codeBlock";
+  return "paragraph";
+}
+
+function applyBlockStyle(editor: Editor | null, value: string) {
+  if (!editor) {
+    return;
+  }
+
+  const chain = editor.chain().focus();
+
+  if (value === "heading-1") {
+    chain.setHeading({ level: 1 }).run();
+    return;
+  }
+
+  if (value === "heading-2") {
+    chain.setHeading({ level: 2 }).run();
+    return;
+  }
+
+  if (value === "heading-3") {
+    chain.setHeading({ level: 3 }).run();
+    return;
+  }
+
+  if (value === "blockquote") {
+    chain.setParagraph().toggleBlockquote().run();
+    return;
+  }
+
+  if (value === "codeBlock") {
+    chain.setParagraph().toggleCodeBlock().run();
+    return;
+  }
+
+  chain.setParagraph().run();
+}
+
 function EditorToolbar({
   editor,
   onImage,
@@ -181,9 +302,76 @@ function EditorToolbar({
   onSave: () => void;
 }) {
   const disabled = !editor;
+  const fontFamily = (editor?.getAttributes("textStyle").fontFamily ??
+    "") as string;
+  const fontSize = ((editor?.getAttributes("textStyle").fontSize as
+    | string
+    | undefined) ?? "16px").replace("px", "");
 
   return (
     <div className="editor-toolbar" aria-label="Editor toolbar">
+      <ToolbarGroup>
+        <select
+          aria-label="Paragraph style"
+          className="toolbar-select style-select"
+          disabled={disabled}
+          onChange={(event) => applyBlockStyle(editor, event.currentTarget.value)}
+          title="Paragraph style"
+          value={currentBlockStyle(editor)}
+        >
+          <option value="paragraph">Normal text</option>
+          <option value="heading-1">Heading 1</option>
+          <option value="heading-2">Heading 2</option>
+          <option value="heading-3">Heading 3</option>
+          <option value="blockquote">Quote</option>
+          <option value="codeBlock">Code block</option>
+        </select>
+      </ToolbarGroup>
+
+      <ToolbarGroup>
+        <select
+          aria-label="Font family"
+          className="toolbar-select font-select"
+          disabled={disabled}
+          onChange={(event) => {
+            const value = event.currentTarget.value;
+            if (value) {
+              editor?.chain().focus().setFontFamily(value).run();
+            } else {
+              editor?.chain().focus().unsetFontFamily().run();
+            }
+          }}
+          title="Font"
+          value={fontFamily}
+        >
+          {FONT_FAMILIES.map((font) => (
+            <option key={font.label} value={font.value}>
+              {font.label}
+            </option>
+          ))}
+        </select>
+        <select
+          aria-label="Font size"
+          className="toolbar-select size-select"
+          disabled={disabled}
+          onChange={(event) =>
+            editor
+              ?.chain()
+              .focus()
+              .setFontSize(`${event.currentTarget.value}px`)
+              .run()
+          }
+          title="Font size"
+          value={FONT_SIZES.includes(fontSize) ? fontSize : "16"}
+        >
+          {FONT_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </select>
+      </ToolbarGroup>
+
       <ToolbarGroup>
         <ToolbarButton
           disabled={disabled}
@@ -393,6 +581,94 @@ function EditorToolbar({
   );
 }
 
+function DocumentUtilityBar({
+  headings,
+  onJumpToHeading,
+  onScrollToBottom,
+  onScrollToTop,
+  progress,
+  stats,
+}: {
+  headings: DocHeading[];
+  onJumpToHeading: (position: number) => void;
+  onScrollToBottom: () => void;
+  onScrollToTop: () => void;
+  progress: number;
+  stats: DocStats;
+}) {
+  return (
+    <div className="doc-utility-bar" aria-label="Document utilities">
+      <div className="utility-left">
+        <label className="outline-select">
+          <ListTree size={16} />
+          <select
+            aria-label="Document outline"
+            disabled={headings.length === 0}
+            onChange={(event) => {
+              const position = Number(event.currentTarget.value);
+              event.currentTarget.value = "";
+              if (Number.isFinite(position)) {
+                onJumpToHeading(position);
+              }
+            }}
+            value=""
+          >
+            <option value="">
+              {headings.length ? "Outline" : "No headings"}
+            </option>
+            {headings.map((heading) => (
+              <option key={heading.id} value={heading.position}>
+                {"  ".repeat(Math.max(heading.level - 1, 0))}
+                {heading.text}
+              </option>
+            ))}
+          </select>
+        </label>
+      </div>
+
+      <div className="utility-stats" aria-label="Document stats">
+        <span title="Words">
+          <Pilcrow size={14} />
+          {stats.words.toLocaleString()} words
+        </span>
+        <span title="Reading time">
+          <Clock3 size={14} />
+          {stats.readingMinutes || 0} min
+        </span>
+        <span title="Scroll progress">
+          <Gauge size={14} />
+          {Math.round(progress)}%
+        </span>
+      </div>
+
+      <div className="utility-actions">
+        <button
+          aria-label="Jump to top"
+          className="utility-button"
+          onClick={onScrollToTop}
+          title="Top"
+          type="button"
+        >
+          <ArrowUpToLine size={16} />
+        </button>
+        <button
+          aria-label="Jump to bottom"
+          className="utility-button"
+          onClick={onScrollToBottom}
+          title="Bottom"
+          type="button"
+        >
+          <ArrowDownToLine size={16} />
+        </button>
+      </div>
+
+      <div className="utility-progress" aria-hidden="true">
+        <span style={{ width: `${progress}%` }} />
+      </div>
+    </div>
+  );
+}
+
 export default function DocApp() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
@@ -402,6 +678,8 @@ export default function DocApp() {
   const [lastSavedAt, setLastSavedAt] = useState<Date | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [bootError, setBootError] = useState<string | null>(null);
+  const [docStats, setDocStats] = useState<DocStats>(EMPTY_STATS);
+  const [scrollProgress, setScrollProgress] = useState(0);
 
   const activeIdRef = useRef<string | null>(null);
   const bootstrappedRef = useRef(false);
@@ -409,6 +687,7 @@ export default function DocApp() {
   const titleReadyRef = useRef(false);
   const saveTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
+  const paperWrapRef = useRef<HTMLDivElement | null>(null);
   const scheduleSaveRef = useRef<() => void>(() => undefined);
 
   const markdownService = useMemo(() => {
@@ -498,6 +777,9 @@ export default function DocApp() {
         types: ["heading", "paragraph"],
       }),
       Highlight,
+      TextStyle,
+      FontFamily,
+      FontSize,
       ChartBlock,
       SketchBlock,
       MathInline,
@@ -521,6 +803,61 @@ export default function DocApp() {
       }
     },
   });
+
+  const updateScrollProgress = useCallback(() => {
+    const container = paperWrapRef.current;
+    if (!container) {
+      setScrollProgress(0);
+      return;
+    }
+
+    const scrollable = container.scrollHeight - container.clientHeight;
+    const nextProgress =
+      scrollable > 0 ? (container.scrollTop / scrollable) * 100 : 0;
+    setScrollProgress(Math.min(100, Math.max(0, nextProgress)));
+  }, []);
+
+  const scrollPaperTo = useCallback(
+    (position: "bottom" | "top") => {
+      const container = paperWrapRef.current;
+      if (!container) {
+        return;
+      }
+
+      container.scrollTo({
+        behavior: "smooth",
+        top: position === "top" ? 0 : container.scrollHeight,
+      });
+      window.setTimeout(updateScrollProgress, 240);
+    },
+    [updateScrollProgress],
+  );
+
+  const jumpToHeading = useCallback(
+    (position: number) => {
+      editor?.chain().focus().setTextSelection(position).scrollIntoView().run();
+      window.setTimeout(updateScrollProgress, 240);
+    },
+    [editor, updateScrollProgress],
+  );
+
+  useEffect(() => {
+    if (!editor) {
+      return;
+    }
+
+    const updateStats = () => {
+      setDocStats(readEditorStats(editor));
+      window.requestAnimationFrame(updateScrollProgress);
+    };
+
+    updateStats();
+    editor.on("update", updateStats);
+
+    return () => {
+      editor.off("update", updateStats);
+    };
+  }, [editor, updateScrollProgress]);
 
   useEffect(() => {
     const media = window.matchMedia("(max-width: 900px)");
@@ -586,9 +923,11 @@ export default function DocApp() {
       window.setTimeout(() => {
         applyingRemoteRef.current = false;
         titleReadyRef.current = true;
+        setDocStats(readEditorStats(editor));
+        updateScrollProgress();
       }, 100);
     },
-    [editor],
+    [editor, updateScrollProgress],
   );
 
   const createDocument = useCallback(
@@ -946,11 +1285,22 @@ export default function DocApp() {
           </div>
         </header>
 
-        <EditorToolbar
-          editor={editor}
-          onImage={() => fileInputRef.current?.click()}
-          onSave={() => void saveNow()}
-        />
+        <div className="sticky-editor-bars">
+          <EditorToolbar
+            editor={editor}
+            onImage={() => fileInputRef.current?.click()}
+            onSave={() => void saveNow()}
+          />
+
+          <DocumentUtilityBar
+            headings={docStats.headings}
+            onJumpToHeading={jumpToHeading}
+            onScrollToBottom={() => scrollPaperTo("bottom")}
+            onScrollToTop={() => scrollPaperTo("top")}
+            progress={scrollProgress}
+            stats={docStats}
+          />
+        </div>
 
         <input
           ref={fileInputRef}
@@ -966,7 +1316,11 @@ export default function DocApp() {
           type="file"
         />
 
-        <div className="paper-wrap">
+        <div
+          className="paper-wrap"
+          onScroll={updateScrollProgress}
+          ref={paperWrapRef}
+        >
           {bootError ? (
             <div className="boot-error">{bootError}</div>
           ) : (
