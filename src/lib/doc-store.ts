@@ -17,14 +17,22 @@ export type JsonValue =
   | JsonValue[]
   | { [key: string]: JsonValue };
 
+export type PageSettings = {
+  margin: "narrow" | "normal" | "wide";
+  orientation: "landscape" | "portrait";
+  paperSize: "a4" | "letter";
+};
+
 export type DocMeta = {
   id: string;
   title: string;
   createdAt: string;
   updatedAt: string;
+  isFavorite: boolean;
   tags: string[];
   excerpt: string;
   markdownPath: string;
+  pageSettings: PageSettings;
 };
 
 export type StoredDoc = DocMeta & {
@@ -44,10 +52,34 @@ const EMPTY_DOC: JsonValue = {
   type: "doc",
   content: [{ type: "paragraph" }],
 };
+const DEFAULT_PAGE_SETTINGS: PageSettings = {
+  margin: "normal",
+  orientation: "portrait",
+  paperSize: "letter",
+};
+
+type StoredMeta = Omit<DocMeta, "isFavorite" | "pageSettings"> & {
+  isFavorite?: boolean;
+  pageSettings?: Partial<PageSettings>;
+};
 
 function cleanTitle(title?: string) {
   const value = title?.trim();
   return value ? value.slice(0, 120) : "Untitled";
+}
+
+function normalizePageSettings(
+  settings?: Partial<PageSettings> | null,
+): PageSettings {
+  return {
+    margin:
+      settings?.margin === "narrow" || settings?.margin === "wide"
+        ? settings.margin
+        : "normal",
+    orientation:
+      settings?.orientation === "landscape" ? "landscape" : "portrait",
+    paperSize: settings?.paperSize === "a4" ? "a4" : "letter",
+  };
 }
 
 function slugify(value: string) {
@@ -129,11 +161,15 @@ function makeExcerpt(markdown: string, html: string) {
 }
 
 async function readMeta(id: string): Promise<DocMeta> {
-  const meta = await readJson<DocMeta | null>(metaPath(id), null);
+  const meta = await readJson<StoredMeta | null>(metaPath(id), null);
   if (!meta) {
     throw new Error("Document not found");
   }
-  return meta;
+  return {
+    ...meta,
+    isFavorite: meta.isFavorite === true,
+    pageSettings: normalizePageSettings(meta.pageSettings),
+  };
 }
 
 export async function listDocs(): Promise<DocMeta[]> {
@@ -186,9 +222,11 @@ export async function createDoc(title?: string): Promise<StoredDoc> {
     title: cleanedTitle,
     createdAt: now,
     updatedAt: now,
+    isFavorite: false,
     tags: [],
     excerpt: "",
     markdownPath: path.relative(process.cwd(), markdownPath(id)),
+    pageSettings: DEFAULT_PAGE_SETTINGS,
   };
 
   await mkdir(path.join(directory, "assets"), { recursive: true });
@@ -208,8 +246,11 @@ export async function updateDoc(
     title?: string;
     content?: JsonValue | null;
     html?: string;
+    isFavorite?: boolean;
     markdown?: string;
+    pageSettings?: Partial<PageSettings>;
     tags?: string[];
+    touch?: boolean;
   },
 ): Promise<StoredDoc> {
   const existing = await getDoc(id);
@@ -217,15 +258,23 @@ export async function updateDoc(
   const html = input.html ?? existing.html;
   const markdown = input.markdown ?? existing.markdown;
   const content = input.content ?? existing.content ?? EMPTY_DOC;
-  const now = new Date().toISOString();
+  const updatedAt =
+    input.touch === false ? existing.updatedAt : new Date().toISOString();
   const meta: DocMeta = {
     id,
     title,
     createdAt: existing.createdAt,
-    updatedAt: now,
+    updatedAt,
+    isFavorite:
+      typeof input.isFavorite === "boolean"
+        ? input.isFavorite
+        : existing.isFavorite,
     tags: input.tags ?? existing.tags,
     excerpt: makeExcerpt(markdown, html),
     markdownPath: existing.markdownPath,
+    pageSettings: normalizePageSettings(
+      input.pageSettings ?? existing.pageSettings,
+    ),
   };
 
   await Promise.all([
