@@ -3,6 +3,7 @@ import {
   mkdir,
   readFile,
   readdir,
+  rename,
   rm,
   stat,
   writeFile,
@@ -146,8 +147,29 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   }
 }
 
+/**
+ * Write a file durably: stream the bytes into a sibling temp file, then rename
+ * it onto the target. rename() is atomic on the same filesystem, so a crash or
+ * full disk mid-write can never leave a reader with a truncated/corrupt file —
+ * the old contents survive intact until the complete new file is swapped in.
+ */
+async function writeFileAtomic(filePath: string, data: string | Buffer) {
+  const tempPath = path.join(
+    path.dirname(filePath),
+    `.${path.basename(filePath)}.tmp-${randomUUID().slice(0, 8)}`,
+  );
+
+  try {
+    await writeFile(tempPath, data);
+    await rename(tempPath, filePath);
+  } catch (error) {
+    await rm(tempPath, { force: true });
+    throw error;
+  }
+}
+
 async function writeJson(filePath: string, value: JsonValue | DocMeta) {
-  await writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, "utf8");
+  await writeFileAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function makeExcerpt(markdown: string, html: string) {
@@ -233,8 +255,8 @@ export async function createDoc(title?: string): Promise<StoredDoc> {
   await Promise.all([
     writeJson(metaPath(id), meta),
     writeJson(contentPath(id), EMPTY_DOC),
-    writeFile(htmlPath(id), "", "utf8"),
-    writeFile(markdownPath(id), "", "utf8"),
+    writeFileAtomic(htmlPath(id), ""),
+    writeFileAtomic(markdownPath(id), ""),
   ]);
 
   return getDoc(id);
@@ -280,8 +302,8 @@ export async function updateDoc(
   await Promise.all([
     writeJson(metaPath(id), meta),
     writeJson(contentPath(id), content),
-    writeFile(htmlPath(id), html, "utf8"),
-    writeFile(markdownPath(id), markdown, "utf8"),
+    writeFileAtomic(htmlPath(id), html),
+    writeFileAtomic(markdownPath(id), markdown),
   ]);
 
   return getDoc(id);
@@ -299,7 +321,7 @@ export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
   const fileName = `${Date.now()}-${safeFileName(file.name)}`;
   const filePath = path.join(dir, fileName);
   const bytes = Buffer.from(await file.arrayBuffer());
-  await writeFile(filePath, bytes);
+  await writeFileAtomic(filePath, bytes);
 
   return {
     name: fileName,
