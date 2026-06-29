@@ -61,6 +61,7 @@ import {
   RectangleHorizontal,
   RectangleVertical,
   Redo2,
+  RotateCcw,
   Save,
   Search,
   Scaling,
@@ -99,6 +100,11 @@ type StoredDoc = DocMeta & {
   content: JSONContent | null;
   html: string;
   markdown: string;
+};
+
+type TrashedDoc = DocMeta & {
+  trashId: string;
+  deletedAt: string;
 };
 
 type SaveState = "loading" | "dirty" | "saving" | "saved" | "error";
@@ -1045,6 +1051,7 @@ function DocumentRow({
 
 export default function DocApp() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
+  const [trashedDocs, setTrashedDocs] = useState<TrashedDoc[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
   const [query, setQuery] = useState("");
@@ -1306,6 +1313,18 @@ export default function DocApp() {
     return nextDocs;
   }, []);
 
+  const refreshTrash = useCallback(async () => {
+    try {
+      const response = await fetch("/api/docs/trash", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+      setTrashedDocs((await response.json()) as TrashedDoc[]);
+    } catch {
+      // Trash is a best-effort convenience; never block the editor on it.
+    }
+  }, []);
+
   const loadDocument = useCallback(
     async (id: string) => {
       if (!editor) {
@@ -1444,6 +1463,7 @@ export default function DocApp() {
     const boot = async () => {
       try {
         const existing = await refreshDocs();
+        void refreshTrash();
         if (existing.length > 0) {
           await loadDocument(existing[0].id);
         } else {
@@ -1458,7 +1478,7 @@ export default function DocApp() {
     };
 
     void boot();
-  }, [createDocument, editor, loadDocument, refreshDocs]);
+  }, [createDocument, editor, loadDocument, refreshDocs, refreshTrash]);
 
   useEffect(
     () => () => {
@@ -1593,7 +1613,9 @@ export default function DocApp() {
       return;
     }
 
-    const confirmed = window.confirm("Delete this local document?");
+    const confirmed = window.confirm(
+      "Move this document to the Trash? You can restore it later.",
+    );
     if (!confirmed) {
       return;
     }
@@ -1609,6 +1631,7 @@ export default function DocApp() {
 
     const remaining = docs.filter((doc) => doc.id !== activeId);
     setDocs(remaining);
+    void refreshTrash();
 
     if (remaining.length > 0) {
       await loadDocument(remaining[0].id);
@@ -1616,6 +1639,67 @@ export default function DocApp() {
       await createDocument("Untitled");
     }
   };
+
+  const restoreDoc = useCallback(
+    async (trashId: string) => {
+      const response = await fetch(`/api/docs/trash/${trashId}/restore`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      const doc = (await response.json()) as StoredDoc;
+      setDocs((current) =>
+        sortDocs([docSummary(doc), ...current.filter((d) => d.id !== doc.id)]),
+      );
+      await refreshTrash();
+      await loadDocument(doc.id);
+    },
+    [loadDocument, refreshTrash],
+  );
+
+  const purgeTrashDoc = useCallback(
+    async (trashId: string) => {
+      const confirmed = window.confirm(
+        "Permanently delete this document? This cannot be undone.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const response = await fetch(`/api/docs/trash/${trashId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      await refreshTrash();
+    },
+    [refreshTrash],
+  );
+
+  const emptyTrashAll = useCallback(async () => {
+    const confirmed = window.confirm(
+      "Permanently delete everything in the Trash? This cannot be undone.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await fetch("/api/docs/trash", { method: "DELETE" });
+    if (!response.ok) {
+      setSaveState("error");
+      return;
+    }
+
+    setTrashedDocs([]);
+  }, []);
 
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
@@ -1752,6 +1836,55 @@ export default function DocApp() {
               )}
             </div>
           </section>
+
+          {trashedDocs.length > 0 && (
+            <section className="trash-panel" aria-label="Trash">
+              <div className="sidebar-section-heading">
+                <Trash2 size={14} strokeWidth={2.2} />
+                <span>Trash</span>
+                <span className="section-count">{trashedDocs.length}</span>
+                <button
+                  className="trash-empty-button"
+                  onClick={() => void emptyTrashAll()}
+                  title="Permanently delete everything in the Trash"
+                  type="button"
+                >
+                  Empty
+                </button>
+              </div>
+
+              <div className="trash-list" aria-label="Trashed documents">
+                {trashedDocs.map((doc) => (
+                  <div className="trash-row" key={doc.trashId}>
+                    <div className="trash-row-main">
+                      <span className="trash-row-title">{doc.title}</span>
+                      <span className="trash-row-date">
+                        Deleted {formatDate(doc.deletedAt)}
+                      </span>
+                    </div>
+                    <button
+                      aria-label={`Restore ${doc.title}`}
+                      className="trash-action"
+                      onClick={() => void restoreDoc(doc.trashId)}
+                      title="Restore"
+                      type="button"
+                    >
+                      <RotateCcw size={15} />
+                    </button>
+                    <button
+                      aria-label={`Permanently delete ${doc.title}`}
+                      className="trash-action danger"
+                      onClick={() => void purgeTrashDoc(doc.trashId)}
+                      title="Delete forever"
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
         </div>
 
         <div className="sidebar-rail-actions" aria-hidden={sidebarOpen}>

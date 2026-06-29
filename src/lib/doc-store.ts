@@ -49,6 +49,10 @@ export type AssetInfo = {
 };
 
 const STORE_DIR = path.join(process.cwd(), "local-docs");
+// Soft-deleted docs are moved here instead of being removed, so an accidental
+// delete is always recoverable. The leading dot keeps it out of listDocs and
+// makes it unaddressable as a doc id (assertSafeId rejects names starting ".").
+const TRASH_DIR = path.join(STORE_DIR, ".trash");
 const EMPTY_DOC: JsonValue = {
   type: "doc",
   content: [{ type: "paragraph" }],
@@ -147,6 +151,15 @@ async function readJson<T>(filePath: string, fallback: T): Promise<T> {
   }
 }
 
+async function pathExists(target: string): Promise<boolean> {
+  try {
+    await stat(target);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /**
  * Write a file durably: stream the bytes into a sibling temp file, then rename
  * it onto the target. rename() is atomic on the same filesystem, so a crash or
@@ -199,7 +212,8 @@ export async function listDocs(): Promise<DocMeta[]> {
   const entries = await readdir(STORE_DIR, { withFileTypes: true });
   const docs = await Promise.all(
     entries
-      .filter((entry) => entry.isDirectory())
+      // Skip dot-folders like .trash so deleted docs never resurface here.
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
       .map(async (entry) => {
         try {
           return await readMeta(entry.name);
@@ -309,8 +323,117 @@ export async function updateDoc(
   return getDoc(id);
 }
 
+export type TrashedDoc = DocMeta & {
+  // Folder name under .trash — the key used to restore or purge. Usually the
+  // doc id, but suffixed if an older trashed copy of the same id already exists.
+  trashId: string;
+  deletedAt: string;
+};
+
+function trashPath(trashId: string) {
+  assertSafeId(trashId);
+  return path.join(TRASH_DIR, trashId);
+}
+
+async function readTrashMeta(trashId: string): Promise<DocMeta | null> {
+  const meta = await readJson<StoredMeta | null>(
+    path.join(trashPath(trashId), "meta.json"),
+    null,
+  );
+  if (!meta) {
+    return null;
+  }
+  return {
+    ...meta,
+    isFavorite: meta.isFavorite === true,
+    pageSettings: normalizePageSettings(meta.pageSettings),
+  };
+}
+
+/**
+ * Soft-delete: move the doc folder into .trash instead of removing it, so the
+ * delete is fully reversible. Nothing is ever erased here.
+ */
 export async function deleteDoc(id: string) {
-  await rm(docDir(id), { recursive: true, force: true });
+  const source = docDir(id);
+  if (!(await pathExists(source))) {
+    return;
+  }
+
+  await mkdir(TRASH_DIR, { recursive: true });
+  let trashId = id;
+  // Never clobber an existing trashed copy of the same id.
+  if (await pathExists(path.join(TRASH_DIR, trashId))) {
+    trashId = `${id}-${randomUUID().slice(0, 8)}`;
+  }
+
+  await rename(source, path.join(TRASH_DIR, trashId));
+}
+
+export async function listTrash(): Promise<TrashedDoc[]> {
+  if (!(await pathExists(TRASH_DIR))) {
+    return [];
+  }
+
+  const entries = await readdir(TRASH_DIR, { withFileTypes: true });
+  const items = await Promise.all(
+    entries
+      .filter((entry) => entry.isDirectory())
+      .map(async (entry) => {
+        try {
+          const meta = await readTrashMeta(entry.name);
+          if (!meta) {
+            return null;
+          }
+          const info = await stat(trashPath(entry.name));
+          return {
+            ...meta,
+            trashId: entry.name,
+            deletedAt: info.mtime.toISOString(),
+          } satisfies TrashedDoc;
+        } catch {
+          return null;
+        }
+      }),
+  );
+
+  return items
+    .filter((item): item is TrashedDoc => Boolean(item))
+    .sort(
+      (a, b) =>
+        new Date(b.deletedAt).getTime() - new Date(a.deletedAt).getTime(),
+    );
+}
+
+/** Move a trashed doc back into the live library, under its original id. */
+export async function restoreFromTrash(trashId: string): Promise<StoredDoc> {
+  const source = trashPath(trashId);
+  if (!(await pathExists(source))) {
+    throw new Error("Trashed document not found");
+  }
+
+  const meta = await readTrashMeta(trashId);
+  if (!meta) {
+    throw new Error("Trashed document is unreadable");
+  }
+
+  const target = docDir(meta.id);
+  if (await pathExists(target)) {
+    throw new Error("A document with that id already exists");
+  }
+
+  await rename(source, target);
+  return getDoc(meta.id);
+}
+
+/** Permanently delete a single trashed doc. */
+export async function purgeDoc(trashId: string) {
+  await rm(trashPath(trashId), { recursive: true, force: true });
+}
+
+/** Permanently delete everything in the trash. */
+export async function emptyTrash() {
+  await rm(TRASH_DIR, { recursive: true, force: true });
 }
 
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
