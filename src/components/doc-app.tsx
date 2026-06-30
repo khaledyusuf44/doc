@@ -46,6 +46,7 @@ import {
   Heading1,
   Heading2,
   Highlighter,
+  History,
   ImagePlus,
   Italic,
   Link2,
@@ -105,6 +106,12 @@ type StoredDoc = DocMeta & {
 type TrashedDoc = DocMeta & {
   trashId: string;
   deletedAt: string;
+};
+
+type DocVersion = {
+  versionId: string;
+  savedAt: string;
+  title: string;
 };
 
 type SaveState = "loading" | "dirty" | "saving" | "saved" | "error";
@@ -1052,6 +1059,8 @@ function DocumentRow({
 export default function DocApp() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [trashedDocs, setTrashedDocs] = useState<TrashedDoc[]>([]);
+  const [versions, setVersions] = useState<DocVersion[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
   const [query, setQuery] = useState("");
@@ -1701,6 +1710,56 @@ export default function DocApp() {
     setTrashedDocs([]);
   }, []);
 
+  const toggleHistory = useCallback(async () => {
+    if (historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+    if (!activeIdRef.current) {
+      return;
+    }
+
+    setHistoryOpen(true);
+    try {
+      const response = await fetch(
+        `/api/docs/${activeIdRef.current}/history`,
+        { cache: "no-store" },
+      );
+      setVersions(response.ok ? ((await response.json()) as DocVersion[]) : []);
+    } catch {
+      setVersions([]);
+    }
+  }, [historyOpen]);
+
+  const restoreVersionInUi = useCallback(
+    async (versionId: string) => {
+      const id = activeIdRef.current;
+      if (!id) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Restore this version? Your current version is saved to history first, so you can undo this.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const response = await fetch(
+        `/api/docs/${id}/history/${versionId}/restore`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      setHistoryOpen(false);
+      await loadDocument(id);
+    },
+    [loadDocument],
+  );
+
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
       return;
@@ -1937,6 +1996,67 @@ export default function DocApp() {
 
           <div className="header-actions">
             {saveState === "saving" && <Loader2 className="spin" size={18} />}
+            <div className="history-control">
+              <button
+                aria-label="Version history"
+                aria-expanded={historyOpen}
+                className={classNames(
+                  "icon-button history-button",
+                  historyOpen && "is-active",
+                )}
+                disabled={!activeId}
+                onClick={() => void toggleHistory()}
+                title="Version history"
+                type="button"
+              >
+                <History size={18} />
+              </button>
+              {historyOpen && (
+                <>
+                  <button
+                    aria-label="Close version history"
+                    className="history-backdrop"
+                    onClick={() => setHistoryOpen(false)}
+                    type="button"
+                  />
+                  <div className="history-panel" role="dialog" aria-label="Version history">
+                    <div className="history-panel-heading">
+                      <History size={15} />
+                      <span>Version history</span>
+                    </div>
+                    {versions.length > 0 ? (
+                      <div className="history-list">
+                        {versions.map((version) => (
+                          <div className="history-row" key={version.versionId}>
+                            <div className="history-row-main">
+                              <span className="history-row-time">
+                                {formatDate(version.savedAt)}
+                              </span>
+                              <span className="history-row-title">
+                                {version.title}
+                              </span>
+                            </div>
+                            <button
+                              className="history-restore"
+                              onClick={() =>
+                                void restoreVersionInUi(version.versionId)
+                              }
+                              type="button"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="history-empty">
+                        No earlier versions yet. Snapshots are saved as you edit.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
             <button
               aria-label={
                 activeDoc?.isFavorite

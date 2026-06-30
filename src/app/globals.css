@@ -435,6 +435,123 @@ button {
   color: #b91c1c;
 }
 
+.history-control {
+  position: relative;
+  display: inline-flex;
+}
+
+.history-button.is-active {
+  background: var(--accent-soft);
+  color: var(--accent);
+}
+
+.history-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 40;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  cursor: default;
+}
+
+.history-panel {
+  position: absolute;
+  top: calc(100% + 8px);
+  right: 0;
+  z-index: 50;
+  width: 280px;
+  max-height: 360px;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  padding: 10px;
+}
+
+.history-panel-heading {
+  align-items: center;
+  color: var(--muted-strong);
+  display: flex;
+  font-size: 11px;
+  font-weight: 760;
+  gap: 6px;
+  letter-spacing: 0;
+  margin-bottom: 8px;
+  text-transform: uppercase;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-height: 0;
+  overflow: auto;
+}
+
+.history-row {
+  align-items: center;
+  border-radius: 8px;
+  display: flex;
+  gap: 8px;
+  padding: 7px 8px;
+  transition: background 140ms ease;
+}
+
+.history-row:hover {
+  background: var(--panel-soft);
+}
+
+.history-row-main {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+
+.history-row-time {
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.history-row-title {
+  color: var(--muted);
+  font-size: 11px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.history-restore {
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  color: var(--muted-strong);
+  cursor: pointer;
+  font-size: 12px;
+  font-weight: 600;
+  margin-left: auto;
+  padding: 4px 10px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.history-restore:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.history-empty {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  margin: 4px 2px 2px;
+}
+
 .sidebar-section-heading {
   align-items: center;
   color: var(--muted-strong);

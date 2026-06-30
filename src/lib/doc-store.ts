@@ -53,6 +53,12 @@ const STORE_DIR = path.join(process.cwd(), "local-docs");
 // delete is always recoverable. The leading dot keeps it out of listDocs and
 // makes it unaddressable as a doc id (assertSafeId rejects names starting ".").
 const TRASH_DIR = path.join(STORE_DIR, ".trash");
+// Per-doc snapshots of prior content live in <doc>/.history. Snapshots are
+// time-throttled (autosave fires every ~700ms, so a snapshot-per-save would
+// blow past the cap in seconds) and pruned to the most recent MAX_VERSIONS.
+const HISTORY_DIRNAME = ".history";
+const MAX_VERSIONS = 50;
+const SNAPSHOT_INTERVAL_MS = 2 * 60 * 1000;
 const EMPTY_DOC: JsonValue = {
   type: "doc",
   content: [{ type: "paragraph" }],
@@ -287,6 +293,7 @@ export async function updateDoc(
     pageSettings?: Partial<PageSettings>;
     tags?: string[];
     touch?: boolean;
+    forceSnapshot?: boolean;
   },
 ): Promise<StoredDoc> {
   const existing = await getDoc(id);
@@ -296,6 +303,11 @@ export async function updateDoc(
   const content = input.content ?? existing.content ?? EMPTY_DOC;
   const updatedAt =
     input.touch === false ? existing.updatedAt : new Date().toISOString();
+
+  // Snapshot the state we're about to overwrite, so any edit is recoverable.
+  if (JSON.stringify(content) !== JSON.stringify(existing.content)) {
+    await maybeSnapshotVersion(id, existing, input.forceSnapshot === true);
+  }
   const meta: DocMeta = {
     id,
     title,
@@ -434,6 +446,146 @@ export async function purgeDoc(trashId: string) {
 /** Permanently delete everything in the trash. */
 export async function emptyTrash() {
   await rm(TRASH_DIR, { recursive: true, force: true });
+}
+
+export type DocVersion = {
+  versionId: string;
+  savedAt: string;
+  title: string;
+};
+
+type StoredVersion = {
+  savedAt: string;
+  title: string;
+  content: JsonValue | null;
+  html: string;
+  markdown: string;
+};
+
+function historyDir(id: string) {
+  return path.join(docDir(id), HISTORY_DIRNAME);
+}
+
+function assertSafeVersionId(versionId: string) {
+  // Version ids are derived from a sanitized timestamp + uuid; reject anything
+  // with path separators or dots so a crafted id can't escape the history dir.
+  if (!/^[A-Za-z0-9][A-Za-z0-9-]*$/.test(versionId)) {
+    throw new Error("Invalid version id");
+  }
+}
+
+async function newestVersionMtime(dir: string): Promise<number | null> {
+  const files = (await readdir(dir).catch(() => [])).filter((name) =>
+    name.endsWith(".json"),
+  );
+  if (files.length === 0) {
+    return null;
+  }
+  // Names start with a chronological timestamp, so the lexically last file is
+  // the most recent — stat just that one rather than the whole directory.
+  files.sort();
+  const info = await stat(path.join(dir, files[files.length - 1]));
+  return info.mtimeMs;
+}
+
+async function pruneVersions(dir: string) {
+  const files = (await readdir(dir).catch(() => []))
+    .filter((name) => name.endsWith(".json"))
+    .sort();
+  const excess = files.length - MAX_VERSIONS;
+  if (excess > 0) {
+    await Promise.all(
+      files
+        .slice(0, excess)
+        .map((name) => rm(path.join(dir, name), { force: true })),
+    );
+  }
+}
+
+async function maybeSnapshotVersion(
+  id: string,
+  prior: StoredDoc,
+  force: boolean,
+) {
+  // Never snapshot a blank starting doc — it adds noise and nothing to recover.
+  if (!prior.content || JSON.stringify(prior.content) === JSON.stringify(EMPTY_DOC)) {
+    return;
+  }
+
+  const dir = historyDir(id);
+  if (!force) {
+    const newest = await newestVersionMtime(dir);
+    if (newest !== null && Date.now() - newest < SNAPSHOT_INTERVAL_MS) {
+      return;
+    }
+  }
+
+  await mkdir(dir, { recursive: true });
+  const versionId = `${prior.updatedAt.replace(/[:.]/g, "-")}-${randomUUID().slice(0, 6)}`;
+  const snapshot: StoredVersion = {
+    savedAt: prior.updatedAt,
+    title: prior.title,
+    content: prior.content,
+    html: prior.html,
+    markdown: prior.markdown,
+  };
+  await writeFileAtomic(
+    path.join(dir, `${versionId}.json`),
+    `${JSON.stringify(snapshot, null, 2)}\n`,
+  );
+  await pruneVersions(dir);
+}
+
+export async function listVersions(id: string): Promise<DocVersion[]> {
+  docDir(id); // validates id
+  const dir = historyDir(id);
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  const versions = await Promise.all(
+    entries
+      .filter((entry) => entry.isFile() && entry.name.endsWith(".json"))
+      .map(async (entry) => {
+        const version = await readJson<StoredVersion | null>(
+          path.join(dir, entry.name),
+          null,
+        );
+        if (!version) {
+          return null;
+        }
+        return {
+          versionId: entry.name.replace(/\.json$/, ""),
+          savedAt: version.savedAt,
+          title: version.title,
+        } satisfies DocVersion;
+      }),
+  );
+
+  return versions
+    .filter((version): version is DocVersion => Boolean(version))
+    .sort((a, b) => new Date(b.savedAt).getTime() - new Date(a.savedAt).getTime());
+}
+
+/** Roll a doc back to a snapshot. The current state is snapshotted first
+ *  (forceSnapshot), so a restore is itself always reversible. */
+export async function restoreVersion(
+  id: string,
+  versionId: string,
+): Promise<StoredDoc> {
+  assertSafeVersionId(versionId);
+  const version = await readJson<StoredVersion | null>(
+    path.join(historyDir(id), `${versionId}.json`),
+    null,
+  );
+  if (!version) {
+    throw new Error("Version not found");
+  }
+
+  return updateDoc(id, {
+    title: version.title,
+    content: version.content,
+    html: version.html,
+    markdown: version.markdown,
+    forceSnapshot: true,
+  });
 }
 
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
