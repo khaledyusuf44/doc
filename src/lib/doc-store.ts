@@ -732,6 +732,58 @@ export async function listTasks(): Promise<DocTasks[]> {
   return grouped.filter((doc) => doc.tasks.length > 0);
 }
 
+/**
+ * Flip a single checklist item's checked state, identified by its position in
+ * the same depth-first order collectTasks uses. Goes through updateDoc, so the
+ * change is atomic and snapshotted into history like any other edit.
+ */
+export async function setTaskChecked(
+  id: string,
+  index: number,
+  checked: boolean,
+): Promise<StoredDoc> {
+  const doc = await getDoc(id);
+  if (!doc.content) {
+    throw new Error("Document has no content");
+  }
+
+  const content = JSON.parse(JSON.stringify(doc.content)) as JsonValue;
+  let counter = 0;
+  let found = false;
+
+  const walk = (node: JsonValue) => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const n = node as {
+      type?: string;
+      attrs?: Record<string, JsonValue>;
+      content?: JsonValue;
+    };
+    if (n.type === "taskItem") {
+      if (counter === index) {
+        n.attrs = { ...(n.attrs ?? {}), checked };
+        found = true;
+      }
+      counter += 1;
+    }
+    if (n.content) {
+      walk(n.content);
+    }
+  };
+  walk(content);
+
+  if (!found) {
+    throw new Error("Task not found");
+  }
+
+  return updateDoc(id, { content });
+}
+
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
   await readMeta(id);
   const dir = assetsDir(id);

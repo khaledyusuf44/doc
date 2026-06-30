@@ -790,10 +790,22 @@ button {
 }
 
 .task-check {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
   color: var(--muted);
+  cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
-  padding-top: 1px;
+  margin-top: 1px;
+  padding: 1px;
+  transition: color 140ms ease, background 140ms ease;
+}
+
+.task-check:hover {
+  background: var(--accent-soft);
+  color: var(--accent);
 }
 
 .task-row.is-done .task-check {

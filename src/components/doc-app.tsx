@@ -1820,6 +1820,49 @@ export default function DocApp() {
     [loadDocument],
   );
 
+  const toggleTask = useCallback(
+    async (docId: string, index: number, nextChecked: boolean) => {
+      // Optimistically flip the item so the checkbox responds instantly.
+      setTaskGroups((groups) =>
+        groups.map((group) => {
+          if (group.docId !== docId) {
+            return group;
+          }
+          const tasks = group.tasks.map((task) =>
+            task.index === index ? { ...task, checked: nextChecked } : task,
+          );
+          return {
+            ...group,
+            tasks,
+            openCount: tasks.filter((task) => !task.checked).length,
+            doneCount: tasks.filter((task) => task.checked).length,
+          };
+        }),
+      );
+
+      try {
+        const response = await fetch(`/api/docs/${docId}/tasks`, {
+          body: JSON.stringify({ index, checked: nextChecked }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error("Could not update task");
+        }
+        // If this doc is open in the editor, reload it so the editor's next
+        // autosave doesn't overwrite the toggle with stale in-memory content.
+        if (activeIdRef.current === docId) {
+          await loadDocument(docId);
+        }
+        void refreshDocs();
+      } catch {
+        setSaveState("error");
+        void refreshTasks(); // fall back to server truth
+      }
+    },
+    [loadDocument, refreshDocs, refreshTasks],
+  );
+
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
       return;
@@ -2308,13 +2351,27 @@ export default function DocApp() {
                         )}
                         key={task.index}
                       >
-                        <span className="task-check" aria-hidden="true">
+                        <button
+                          aria-label={
+                            task.checked ? "Mark as not done" : "Mark as done"
+                          }
+                          aria-pressed={task.checked}
+                          className="task-check"
+                          onClick={() =>
+                            void toggleTask(
+                              group.docId,
+                              task.index,
+                              !task.checked,
+                            )
+                          }
+                          type="button"
+                        >
                           {task.checked ? (
                             <CheckSquare size={15} />
                           ) : (
                             <Square size={15} />
                           )}
-                        </span>
+                        </button>
                         <span className="task-text">
                           {task.text || "Untitled task"}
                         </span>
