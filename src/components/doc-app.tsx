@@ -52,6 +52,7 @@ import {
   Italic,
   Link2,
   List,
+  ListChecks,
   ListOrdered,
   ListTree,
   Loader2,
@@ -68,12 +69,14 @@ import {
   Search,
   Scaling,
   Sigma,
+  Square,
   SquareSigma,
   Star,
   Table2,
   Trash2,
   Underline as UnderlineIcon,
   Undo2,
+  X,
   type LucideIcon,
 } from "lucide-react";
 import {
@@ -114,6 +117,23 @@ type DocVersion = {
   savedAt: string;
   title: string;
 };
+
+type Task = {
+  text: string;
+  checked: boolean;
+  index: number;
+};
+
+type DocTasks = {
+  docId: string;
+  docTitle: string;
+  updatedAt: string;
+  openCount: number;
+  doneCount: number;
+  tasks: Task[];
+};
+
+type TaskFilter = "open" | "all" | "done";
 
 type SaveState = "loading" | "dirty" | "saving" | "saved" | "error";
 
@@ -1062,6 +1082,9 @@ export default function DocApp() {
   const [trashedDocs, setTrashedDocs] = useState<TrashedDoc[]>([]);
   const [versions, setVersions] = useState<DocVersion[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
+  const [taskGroups, setTaskGroups] = useState<DocTasks[]>([]);
+  const [tasksOpen, setTasksOpen] = useState(false);
+  const [taskFilter, setTaskFilter] = useState<TaskFilter>("open");
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
   const [query, setQuery] = useState("");
@@ -1335,6 +1358,23 @@ export default function DocApp() {
     }
   }, []);
 
+  const refreshTasks = useCallback(async () => {
+    try {
+      const response = await fetch("/api/tasks", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+      setTaskGroups((await response.json()) as DocTasks[]);
+    } catch {
+      // Tasks view is derived/optional; never block the editor on it.
+    }
+  }, []);
+
+  const openTasks = useCallback(() => {
+    setTasksOpen(true);
+    void refreshTasks();
+  }, [refreshTasks]);
+
   const loadDocument = useCallback(
     async (id: string) => {
       if (!editor) {
@@ -1474,6 +1514,7 @@ export default function DocApp() {
       try {
         const existing = await refreshDocs();
         void refreshTrash();
+        void refreshTasks();
         if (existing.length > 0) {
           await loadDocument(existing[0].id);
         } else {
@@ -1488,7 +1529,7 @@ export default function DocApp() {
     };
 
     void boot();
-  }, [createDocument, editor, loadDocument, refreshDocs, refreshTrash]);
+  }, [createDocument, editor, loadDocument, refreshDocs, refreshTasks, refreshTrash]);
 
   useEffect(
     () => () => {
@@ -1521,6 +1562,24 @@ export default function DocApp() {
     () => filteredDocs.filter((doc) => !doc.isFavorite),
     [filteredDocs],
   );
+
+  const totalOpenTasks = useMemo(
+    () => taskGroups.reduce((sum, group) => sum + group.openCount, 0),
+    [taskGroups],
+  );
+
+  const visibleTaskGroups = useMemo(() => {
+    const matches = (task: Task) =>
+      taskFilter === "all"
+        ? true
+        : taskFilter === "open"
+          ? !task.checked
+          : task.checked;
+
+    return taskGroups
+      .map((group) => ({ ...group, tasks: group.tasks.filter(matches) }))
+      .filter((group) => group.tasks.length > 0);
+  }, [taskGroups, taskFilter]);
 
   const zoomScale = useMemo(() => {
     if (zoomMode !== "fit") {
@@ -1761,6 +1820,49 @@ export default function DocApp() {
     [loadDocument],
   );
 
+  const toggleTask = useCallback(
+    async (docId: string, index: number, nextChecked: boolean) => {
+      // Optimistically flip the item so the checkbox responds instantly.
+      setTaskGroups((groups) =>
+        groups.map((group) => {
+          if (group.docId !== docId) {
+            return group;
+          }
+          const tasks = group.tasks.map((task) =>
+            task.index === index ? { ...task, checked: nextChecked } : task,
+          );
+          return {
+            ...group,
+            tasks,
+            openCount: tasks.filter((task) => !task.checked).length,
+            doneCount: tasks.filter((task) => task.checked).length,
+          };
+        }),
+      );
+
+      try {
+        const response = await fetch(`/api/docs/${docId}/tasks`, {
+          body: JSON.stringify({ index, checked: nextChecked }),
+          headers: { "Content-Type": "application/json" },
+          method: "POST",
+        });
+        if (!response.ok) {
+          throw new Error("Could not update task");
+        }
+        // If this doc is open in the editor, reload it so the editor's next
+        // autosave doesn't overwrite the toggle with stale in-memory content.
+        if (activeIdRef.current === docId) {
+          await loadDocument(docId);
+        }
+        void refreshDocs();
+      } catch {
+        setSaveState("error");
+        void refreshTasks(); // fall back to server truth
+      }
+    },
+    [loadDocument, refreshDocs, refreshTasks],
+  );
+
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
       return;
@@ -1842,6 +1944,14 @@ export default function DocApp() {
               placeholder="Search"
             />
           </label>
+
+          <button className="tasks-nav-button" onClick={openTasks} type="button">
+            <ListChecks size={16} />
+            <span>Tasks</span>
+            {totalOpenTasks > 0 && (
+              <span className="tasks-nav-count">{totalOpenTasks}</span>
+            )}
+          </button>
 
           <section className="favorites-panel" aria-label="Favorite documents">
             <div className="sidebar-section-heading">
@@ -2170,6 +2280,118 @@ export default function DocApp() {
           )}
         </div>
       </section>
+
+      {tasksOpen && (
+        <div className="tasks-overlay" role="dialog" aria-label="Tasks across all documents">
+          <button
+            aria-label="Close tasks"
+            className="tasks-backdrop"
+            onClick={() => setTasksOpen(false)}
+            type="button"
+          />
+          <div className="tasks-modal">
+            <div className="tasks-modal-header">
+              <div className="tasks-modal-title">
+                <ListChecks size={18} />
+                <span>Tasks</span>
+                <span className="tasks-modal-count">
+                  {totalOpenTasks} open
+                </span>
+              </div>
+              <div className="tasks-filter" role="group" aria-label="Filter tasks">
+                {(["open", "all", "done"] as const).map((filter) => (
+                  <button
+                    aria-pressed={taskFilter === filter}
+                    className={classNames(
+                      "tasks-filter-button",
+                      taskFilter === filter && "is-active",
+                    )}
+                    key={filter}
+                    onClick={() => setTaskFilter(filter)}
+                    type="button"
+                  >
+                    {filter === "open" ? "Open" : filter === "all" ? "All" : "Done"}
+                  </button>
+                ))}
+              </div>
+              <button
+                aria-label="Close tasks"
+                className="tasks-close"
+                onClick={() => setTasksOpen(false)}
+                type="button"
+              >
+                <X size={18} />
+              </button>
+            </div>
+
+            <div className="tasks-modal-body">
+              {visibleTaskGroups.length > 0 ? (
+                visibleTaskGroups.map((group) => (
+                  <div className="tasks-group" key={group.docId}>
+                    <button
+                      className="tasks-group-title"
+                      onClick={() => {
+                        setTasksOpen(false);
+                        loadAndMaybeClose(group.docId);
+                      }}
+                      title={`Open ${group.docTitle}`}
+                      type="button"
+                    >
+                      <FileText size={14} />
+                      <span className="tasks-group-name">{group.docTitle}</span>
+                      <span className="tasks-group-count">
+                        {group.openCount} open
+                      </span>
+                    </button>
+                    {group.tasks.map((task) => (
+                      <div
+                        className={classNames(
+                          "task-row",
+                          task.checked && "is-done",
+                        )}
+                        key={task.index}
+                      >
+                        <button
+                          aria-label={
+                            task.checked ? "Mark as not done" : "Mark as done"
+                          }
+                          aria-pressed={task.checked}
+                          className="task-check"
+                          onClick={() =>
+                            void toggleTask(
+                              group.docId,
+                              task.index,
+                              !task.checked,
+                            )
+                          }
+                          type="button"
+                        >
+                          {task.checked ? (
+                            <CheckSquare size={15} />
+                          ) : (
+                            <Square size={15} />
+                          )}
+                        </button>
+                        <span className="task-text">
+                          {task.text || "Untitled task"}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ))
+              ) : (
+                <p className="tasks-empty">
+                  {taskFilter === "done"
+                    ? "Nothing completed yet."
+                    : taskFilter === "open"
+                      ? "No open tasks. Add a checklist in any doc."
+                      : "No tasks yet. Add a checklist in any doc."}
+                </p>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
     </main>
   );
 }
