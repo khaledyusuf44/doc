@@ -2,6 +2,11 @@
 
 import { ChartBlock, SketchBlock } from "@/components/editor-blocks";
 import { MathBlock, MathInline } from "@/components/math-blocks";
+import {
+  PAGINATION_REFLOW_EVENT,
+  Pagination,
+  type PaginationMetrics,
+} from "@/components/pagination-extension";
 import type { Content, JSONContent } from "@tiptap/core";
 import { EditorContent, useEditor, type Editor } from "@tiptap/react";
 import Highlight from "@tiptap/extension-highlight";
@@ -12,7 +17,12 @@ import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table
 import TaskItem from "@tiptap/extension-task-item";
 import TaskList from "@tiptap/extension-task-list";
 import TextAlign from "@tiptap/extension-text-align";
-import { FontFamily, FontSize, TextStyle } from "@tiptap/extension-text-style";
+import {
+  Color,
+  FontFamily,
+  FontSize,
+  TextStyle,
+} from "@tiptap/extension-text-style";
 import Underline from "@tiptap/extension-underline";
 import StarterKit from "@tiptap/starter-kit";
 import {
@@ -28,11 +38,16 @@ import {
   CheckSquare,
   Clock3,
   Code2,
+  Download,
+  Eraser,
   FilePlus2,
+  FileText,
+  Files,
   Gauge,
   Heading1,
   Heading2,
   Highlighter,
+  History,
   ImagePlus,
   Italic,
   Link2,
@@ -40,22 +55,35 @@ import {
   ListOrdered,
   ListTree,
   Loader2,
+  Palette,
   PanelLeftClose,
   PanelLeftOpen,
   Pilcrow,
   Quote,
+  RectangleHorizontal,
+  RectangleVertical,
   Redo2,
+  RotateCcw,
   Save,
   Search,
+  Scaling,
   Sigma,
   SquareSigma,
+  Star,
   Table2,
   Trash2,
   Underline as UnderlineIcon,
   Undo2,
   type LucideIcon,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+  type CSSProperties,
+} from "react";
 import TurndownService from "turndown";
 
 type DocMeta = {
@@ -63,9 +91,11 @@ type DocMeta = {
   title: string;
   createdAt: string;
   updatedAt: string;
+  isFavorite: boolean;
   tags: string[];
   excerpt: string;
   markdownPath: string;
+  pageSettings: PageSettings;
 };
 
 type StoredDoc = DocMeta & {
@@ -74,7 +104,26 @@ type StoredDoc = DocMeta & {
   markdown: string;
 };
 
+type TrashedDoc = DocMeta & {
+  trashId: string;
+  deletedAt: string;
+};
+
+type DocVersion = {
+  versionId: string;
+  savedAt: string;
+  title: string;
+};
+
 type SaveState = "loading" | "dirty" | "saving" | "saved" | "error";
+
+type PageSettings = {
+  margin: "narrow" | "normal" | "wide";
+  orientation: "landscape" | "portrait";
+  paperSize: "a4" | "letter";
+};
+
+type ZoomMode = "50" | "75" | "90" | "100" | "125" | "fit";
 
 type DocHeading = {
   id: string;
@@ -101,6 +150,33 @@ const EMPTY_STATS: DocStats = {
   readingMinutes: 0,
   words: 0,
 };
+
+const DEFAULT_PAGE_SETTINGS: PageSettings = {
+  margin: "normal",
+  orientation: "portrait",
+  paperSize: "letter",
+};
+
+const PAPER_SIZES = {
+  letter: { height: 1056, label: "Letter", width: 816 },
+  a4: { height: 1123, label: "A4", width: 794 },
+} as const;
+
+const PAGE_MARGINS = {
+  narrow: { horizontal: 48, label: "Narrow", vertical: 48 },
+  normal: { horizontal: 96, label: "Normal", vertical: 96 },
+  wide: { horizontal: 120, label: "Wide", vertical: 96 },
+} as const;
+
+const PAGE_GAP = 24;
+const ZOOM_OPTIONS: Array<{ label: string; value: ZoomMode }> = [
+  { label: "Fit", value: "fit" },
+  { label: "50%", value: "50" },
+  { label: "75%", value: "75" },
+  { label: "90%", value: "90" },
+  { label: "100%", value: "100" },
+  { label: "125%", value: "125" },
+];
 
 const CHART_CONTENT: Content = {
   type: "chartBlock",
@@ -141,6 +217,16 @@ const FONT_FAMILIES = [
 ];
 
 const FONT_SIZES = ["12", "14", "16", "18", "20", "24", "28", "32", "40"];
+const TEXT_COLORS = [
+  { label: "Default ink", value: "#1f2924" },
+  { label: "Slate", value: "#475569" },
+  { label: "Red", value: "#dc2626" },
+  { label: "Amber", value: "#d97706" },
+  { label: "Green", value: "#15803d" },
+  { label: "Blue", value: "#2563eb" },
+  { label: "Purple", value: "#7c3aed" },
+  { label: "Pink", value: "#db2777" },
+];
 
 function classNames(...values: Array<string | false | null | undefined>) {
   return values.filter(Boolean).join(" ");
@@ -161,9 +247,11 @@ function docSummary(doc: StoredDoc): DocMeta {
     title: doc.title,
     createdAt: doc.createdAt,
     updatedAt: doc.updatedAt,
+    isFavorite: doc.isFavorite,
     tags: doc.tags,
     excerpt: doc.excerpt,
     markdownPath: doc.markdownPath,
+    pageSettings: doc.pageSettings,
   };
 }
 
@@ -172,6 +260,26 @@ function sortDocs(docs: DocMeta[]) {
     (a, b) => new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime(),
   );
 }
+
+function getPageMetrics(settings: PageSettings): PaginationMetrics {
+  const paper = PAPER_SIZES[settings.paperSize];
+  const margins = PAGE_MARGINS[settings.margin];
+  const portrait = settings.orientation === "portrait";
+
+  return {
+    gap: PAGE_GAP,
+    height: portrait ? paper.height : paper.width,
+    marginBottom: margins.vertical,
+    marginLeft: margins.horizontal,
+    marginRight: margins.horizontal,
+    marginTop: margins.vertical,
+    width: portrait ? paper.width : paper.height,
+  };
+}
+
+const paginationMetricsStore = {
+  current: getPageMetrics(DEFAULT_PAGE_SETTINGS),
+};
 
 function readEditorStats(editor: Editor | null): DocStats {
   if (!editor) {
@@ -292,6 +400,120 @@ function applyBlockStyle(editor: Editor | null, value: string) {
   chain.setParagraph().run();
 }
 
+function normalizeHexColor(value?: string | null) {
+  if (!value) {
+    return "";
+  }
+
+  const trimmed = value.trim().toLowerCase();
+  const shortHex = trimmed.match(/^#([0-9a-f]{3})$/i);
+  if (shortHex) {
+    return `#${shortHex[1]
+      .split("")
+      .map((char) => `${char}${char}`)
+      .join("")}`;
+  }
+
+  if (/^#[0-9a-f]{6}$/i.test(trimmed)) {
+    return trimmed;
+  }
+
+  const rgb = trimmed.match(
+    /^rgba?\((\d{1,3}),\s*(\d{1,3}),\s*(\d{1,3})(?:,\s*[\d.]+)?\)$/,
+  );
+  if (!rgb) {
+    return "";
+  }
+
+  return `#${rgb
+    .slice(1, 4)
+    .map((channel) =>
+      Math.max(0, Math.min(255, Number(channel)))
+        .toString(16)
+        .padStart(2, "0"),
+    )
+    .join("")}`;
+}
+
+function applyTextColor(editor: Editor | null, color: string) {
+  editor?.chain().focus().setColor(color).run();
+}
+
+function unsetTextColor(editor: Editor | null) {
+  editor?.chain().focus().unsetColor().run();
+}
+
+function TextColorControl({
+  disabled,
+  editor,
+}: {
+  disabled: boolean;
+  editor: Editor | null;
+}) {
+  const currentColor = normalizeHexColor(
+    editor?.getAttributes("textStyle").color as string | undefined,
+  );
+  const inputColor = currentColor || TEXT_COLORS[0].value;
+
+  return (
+    <div className="color-control" aria-label="Text color">
+      <span className="color-control-icon" title="Text color">
+        <Palette size={16} strokeWidth={2.1} />
+      </span>
+      {TEXT_COLORS.map((color) => (
+        <button
+          aria-label={color.label}
+          aria-pressed={currentColor === color.value}
+          className={classNames(
+            "color-swatch",
+            currentColor === color.value && "is-active",
+          )}
+          disabled={disabled}
+          key={color.value}
+          onMouseDown={(event) => {
+            event.preventDefault();
+            if (!disabled) {
+              applyTextColor(editor, color.value);
+            }
+          }}
+          style={{ "--swatch-color": color.value } as CSSProperties}
+          title={color.label}
+          type="button"
+        />
+      ))}
+      <label className={classNames("custom-color-button", disabled && "is-disabled")}>
+        <span
+          className="custom-color-preview"
+          style={{ "--swatch-color": inputColor } as CSSProperties}
+        />
+        <input
+          aria-label="Custom text color"
+          disabled={disabled}
+          onChange={(event) => applyTextColor(editor, event.currentTarget.value)}
+          title="Custom text color"
+          type="color"
+          value={inputColor}
+        />
+      </label>
+      <button
+        aria-label="Clear text color"
+        className="color-clear-button"
+        disabled={disabled || !currentColor}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          if (!disabled) {
+            unsetTextColor(editor);
+          }
+        }}
+        title="Clear text color"
+        type="button"
+      >
+        <Eraser size={14} strokeWidth={2.2} />
+      </button>
+    </div>
+  );
+}
+
 function EditorToolbar({
   editor,
   onImage,
@@ -370,6 +592,7 @@ function EditorToolbar({
             </option>
           ))}
         </select>
+        <TextColorControl disabled={disabled} editor={editor} />
       </ToolbarGroup>
 
       <ToolbarGroup>
@@ -584,17 +807,27 @@ function EditorToolbar({
 function DocumentUtilityBar({
   headings,
   onJumpToHeading,
+  onPageSettingsChange,
   onScrollToBottom,
   onScrollToTop,
+  onZoomModeChange,
+  pageCount,
+  pageSettings,
   progress,
   stats,
+  zoomMode,
 }: {
   headings: DocHeading[];
   onJumpToHeading: (position: number) => void;
+  onPageSettingsChange: (settings: PageSettings) => void;
   onScrollToBottom: () => void;
   onScrollToTop: () => void;
+  onZoomModeChange: (zoomMode: ZoomMode) => void;
+  pageCount: number;
+  pageSettings: PageSettings;
   progress: number;
   stats: DocStats;
+  zoomMode: ZoomMode;
 }) {
   return (
     <div className="doc-utility-bar" aria-label="Document utilities">
@@ -624,9 +857,114 @@ function DocumentUtilityBar({
             ))}
           </select>
         </label>
+
+        <div className="page-layout-controls" aria-label="Page layout">
+          <label className="utility-select paper-size-select">
+            <FileText size={15} />
+            <select
+              aria-label="Paper size"
+              onChange={(event) =>
+                onPageSettingsChange({
+                  ...pageSettings,
+                  paperSize: event.currentTarget.value as PageSettings["paperSize"],
+                })
+              }
+              value={pageSettings.paperSize}
+            >
+              {Object.entries(PAPER_SIZES).map(([value, paper]) => (
+                <option key={value} value={value}>
+                  {paper.label}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <div
+            aria-label="Page orientation"
+            className="orientation-control"
+            role="group"
+          >
+            <button
+              aria-label="Portrait"
+              aria-pressed={pageSettings.orientation === "portrait"}
+              className={classNames(
+                "orientation-button",
+                pageSettings.orientation === "portrait" && "is-active",
+              )}
+              onClick={() =>
+                onPageSettingsChange({
+                  ...pageSettings,
+                  orientation: "portrait",
+                })
+              }
+              title="Portrait"
+              type="button"
+            >
+              <RectangleVertical size={15} />
+            </button>
+            <button
+              aria-label="Landscape"
+              aria-pressed={pageSettings.orientation === "landscape"}
+              className={classNames(
+                "orientation-button",
+                pageSettings.orientation === "landscape" && "is-active",
+              )}
+              onClick={() =>
+                onPageSettingsChange({
+                  ...pageSettings,
+                  orientation: "landscape",
+                })
+              }
+              title="Landscape"
+              type="button"
+            >
+              <RectangleHorizontal size={15} />
+            </button>
+          </div>
+
+          <label className="utility-select margin-select">
+            <select
+              aria-label="Page margins"
+              onChange={(event) =>
+                onPageSettingsChange({
+                  ...pageSettings,
+                  margin: event.currentTarget.value as PageSettings["margin"],
+                })
+              }
+              value={pageSettings.margin}
+            >
+              {Object.entries(PAGE_MARGINS).map(([value, margin]) => (
+                <option key={value} value={value}>
+                  {margin.label} margins
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label className="utility-select zoom-select">
+            <Scaling size={15} />
+            <select
+              aria-label="Document zoom"
+              onChange={(event) =>
+                onZoomModeChange(event.currentTarget.value as ZoomMode)
+              }
+              value={zoomMode}
+            >
+              {ZOOM_OPTIONS.map((zoom) => (
+                <option key={zoom.value} value={zoom.value}>
+                  {zoom.label}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
       </div>
 
       <div className="utility-stats" aria-label="Document stats">
+        <span title="Pages">
+          <Files size={14} />
+          {pageCount} {pageCount === 1 ? "page" : "pages"}
+        </span>
         <span title="Words">
           <Pilcrow size={14} />
           {stats.words.toLocaleString()} words
@@ -669,8 +1007,61 @@ function DocumentUtilityBar({
   );
 }
 
+function DocumentRow({
+  active,
+  compact,
+  doc,
+  onOpen,
+  onToggleFavorite,
+}: {
+  active: boolean;
+  compact?: boolean;
+  doc: DocMeta;
+  onOpen: (id: string) => void;
+  onToggleFavorite: (doc: DocMeta) => void;
+}) {
+  const favoriteLabel = doc.isFavorite
+    ? `Remove ${doc.title} from favorites`
+    : `Add ${doc.title} to favorites`;
+
+  return (
+    <div
+      className={classNames(
+        "doc-row",
+        active && "is-active",
+        compact && "is-compact",
+      )}
+    >
+      <button
+        className="doc-row-main"
+        onClick={() => onOpen(doc.id)}
+        type="button"
+      >
+        <span className="doc-row-title">{doc.title}</span>
+        <span className="doc-row-date">{formatDate(doc.updatedAt)}</span>
+        {doc.excerpt && (
+          <span className="doc-row-excerpt">{doc.excerpt}</span>
+        )}
+      </button>
+      <button
+        aria-label={favoriteLabel}
+        aria-pressed={doc.isFavorite}
+        className={classNames("favorite-toggle", doc.isFavorite && "is-active")}
+        onClick={() => onToggleFavorite(doc)}
+        title={doc.isFavorite ? "Remove from favorites" : "Add to favorites"}
+        type="button"
+      >
+        <Star size={15} strokeWidth={2.2} />
+      </button>
+    </div>
+  );
+}
+
 export default function DocApp() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
+  const [trashedDocs, setTrashedDocs] = useState<TrashedDoc[]>([]);
+  const [versions, setVersions] = useState<DocVersion[]>([]);
+  const [historyOpen, setHistoryOpen] = useState(false);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
   const [query, setQuery] = useState("");
@@ -680,6 +1071,17 @@ export default function DocApp() {
   const [bootError, setBootError] = useState<string | null>(null);
   const [docStats, setDocStats] = useState<DocStats>(EMPTY_STATS);
   const [scrollProgress, setScrollProgress] = useState(0);
+  const [pageSettings, setPageSettings] = useState<PageSettings>(
+    DEFAULT_PAGE_SETTINGS,
+  );
+  const [pageCount, setPageCount] = useState(1);
+  const [zoomMode, setZoomMode] = useState<ZoomMode>("fit");
+  const [paperViewportWidth, setPaperViewportWidth] = useState(0);
+
+  const pageMetrics = useMemo(
+    () => getPageMetrics(pageSettings),
+    [pageSettings],
+  );
 
   const activeIdRef = useRef<string | null>(null);
   const bootstrappedRef = useRef(false);
@@ -780,6 +1182,11 @@ export default function DocApp() {
       TextStyle,
       FontFamily,
       FontSize,
+      Color,
+      Pagination.configure({
+        getMetrics: () => paginationMetricsStore.current,
+        onPageCountChange: setPageCount,
+      }),
       ChartBlock,
       SketchBlock,
       MathInline,
@@ -878,6 +1285,25 @@ export default function DocApp() {
     };
   }, []);
 
+  useEffect(() => {
+    const container = paperWrapRef.current;
+    if (!container) {
+      return;
+    }
+
+    const updateWidth = () => setPaperViewportWidth(container.clientWidth);
+    const resizeObserver = new ResizeObserver(updateWidth);
+    resizeObserver.observe(container);
+    updateWidth();
+
+    return () => resizeObserver.disconnect();
+  }, []);
+
+  useEffect(() => {
+    paginationMetricsStore.current = pageMetrics;
+    window.dispatchEvent(new Event(PAGINATION_REFLOW_EVENT));
+  }, [pageMetrics]);
+
   const toMarkdown = useCallback(
     (html: string) => {
       const markdown = markdownService.turndown(html).trim();
@@ -895,6 +1321,18 @@ export default function DocApp() {
     const nextDocs = (await response.json()) as DocMeta[];
     setDocs(sortDocs(nextDocs));
     return nextDocs;
+  }, []);
+
+  const refreshTrash = useCallback(async () => {
+    try {
+      const response = await fetch("/api/docs/trash", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+      setTrashedDocs((await response.json()) as TrashedDoc[]);
+    } catch {
+      // Trash is a best-effort convenience; never block the editor on it.
+    }
   }, []);
 
   const loadDocument = useCallback(
@@ -916,6 +1354,8 @@ export default function DocApp() {
       activeIdRef.current = doc.id;
       setActiveId(doc.id);
       setTitle(doc.title);
+      setPageSettings(doc.pageSettings ?? DEFAULT_PAGE_SETTINGS);
+      setPageCount(1);
       editor.commands.setContent(doc.content ?? EMPTY_CONTENT);
       setLastSavedAt(new Date(doc.updatedAt));
       setSaveState("saved");
@@ -972,6 +1412,7 @@ export default function DocApp() {
           content,
           html,
           markdown,
+          pageSettings,
           title,
         }),
         headers: { "Content-Type": "application/json" },
@@ -992,7 +1433,7 @@ export default function DocApp() {
     } catch {
       setSaveState("error");
     }
-  }, [editor, title, toMarkdown]);
+  }, [editor, pageSettings, title, toMarkdown]);
 
   const scheduleSave = useCallback(() => {
     if (!activeIdRef.current || applyingRemoteRef.current || !titleReadyRef.current) {
@@ -1020,7 +1461,7 @@ export default function DocApp() {
     }
 
     scheduleSave();
-  }, [activeId, editor, scheduleSave, title]);
+  }, [activeId, editor, pageSettings, scheduleSave, title]);
 
   useEffect(() => {
     if (!editor || bootstrappedRef.current) {
@@ -1032,6 +1473,7 @@ export default function DocApp() {
     const boot = async () => {
       try {
         const existing = await refreshDocs();
+        void refreshTrash();
         if (existing.length > 0) {
           await loadDocument(existing[0].id);
         } else {
@@ -1046,7 +1488,7 @@ export default function DocApp() {
     };
 
     void boot();
-  }, [createDocument, editor, loadDocument, refreshDocs]);
+  }, [createDocument, editor, loadDocument, refreshDocs, refreshTrash]);
 
   useEffect(
     () => () => {
@@ -1071,6 +1513,51 @@ export default function DocApp() {
     );
   }, [docs, query]);
 
+  const favoriteDocs = useMemo(
+    () => filteredDocs.filter((doc) => doc.isFavorite),
+    [filteredDocs],
+  );
+  const regularDocs = useMemo(
+    () => filteredDocs.filter((doc) => !doc.isFavorite),
+    [filteredDocs],
+  );
+
+  const zoomScale = useMemo(() => {
+    if (zoomMode !== "fit") {
+      return Number(zoomMode) / 100;
+    }
+
+    if (!paperViewportWidth) {
+      return 1;
+    }
+
+    return Math.min(
+      1,
+      Math.max(0.3, (paperViewportWidth - 48) / pageMetrics.width),
+    );
+  }, [pageMetrics.width, paperViewportWidth, zoomMode]);
+
+  const pageStride = pageMetrics.height + pageMetrics.gap;
+  const documentHeight =
+    pageCount * pageMetrics.height + Math.max(0, pageCount - 1) * pageMetrics.gap;
+  const pageViewportStyle = {
+    height: `${documentHeight * zoomScale}px`,
+    width: `${pageMetrics.width * zoomScale}px`,
+  } satisfies CSSProperties;
+  const paperStageStyle = {
+    "--document-height": `${documentHeight}px`,
+    "--page-gap": `${pageMetrics.gap}px`,
+    "--page-height": `${pageMetrics.height}px`,
+    "--page-margin-bottom": `${pageMetrics.marginBottom}px`,
+    "--page-margin-left": `${pageMetrics.marginLeft}px`,
+    "--page-margin-right": `${pageMetrics.marginRight}px`,
+    "--page-margin-top": `${pageMetrics.marginTop}px`,
+    "--page-width": `${pageMetrics.width}px`,
+    height: `${documentHeight}px`,
+    transform: `scale(${zoomScale})`,
+    width: `${pageMetrics.width}px`,
+  } as CSSProperties;
+
   const activeDoc = docs.find((doc) => doc.id === activeId) ?? null;
 
   const closeSidebarOnNarrow = useCallback(() => {
@@ -1090,12 +1577,55 @@ export default function DocApp() {
     [closeSidebarOnNarrow, loadDocument],
   );
 
+  const toggleFavorite = useCallback(async (doc: DocMeta) => {
+    const nextIsFavorite = !doc.isFavorite;
+
+    setDocs((current) =>
+      current.map((item) =>
+        item.id === doc.id ? { ...item, isFavorite: nextIsFavorite } : item,
+      ),
+    );
+
+    try {
+      const response = await fetch(`/api/docs/${doc.id}`, {
+        body: JSON.stringify({
+          isFavorite: nextIsFavorite,
+          touch: false,
+        }),
+        headers: { "Content-Type": "application/json" },
+        method: "PUT",
+      });
+
+      if (!response.ok) {
+        throw new Error("Could not update favorite");
+      }
+
+      const saved = (await response.json()) as StoredDoc;
+      setDocs((current) =>
+        sortDocs(
+          current.map((item) =>
+            item.id === saved.id ? docSummary(saved) : item,
+          ),
+        ),
+      );
+    } catch {
+      setDocs((current) =>
+        current.map((item) =>
+          item.id === doc.id ? { ...item, isFavorite: doc.isFavorite } : item,
+        ),
+      );
+      setSaveState("error");
+    }
+  }, []);
+
   const deleteActive = async () => {
     if (!activeId) {
       return;
     }
 
-    const confirmed = window.confirm("Delete this local document?");
+    const confirmed = window.confirm(
+      "Move this document to the Trash? You can restore it later.",
+    );
     if (!confirmed) {
       return;
     }
@@ -1111,6 +1641,7 @@ export default function DocApp() {
 
     const remaining = docs.filter((doc) => doc.id !== activeId);
     setDocs(remaining);
+    void refreshTrash();
 
     if (remaining.length > 0) {
       await loadDocument(remaining[0].id);
@@ -1118,6 +1649,117 @@ export default function DocApp() {
       await createDocument("Untitled");
     }
   };
+
+  const restoreDoc = useCallback(
+    async (trashId: string) => {
+      const response = await fetch(`/api/docs/trash/${trashId}/restore`, {
+        method: "POST",
+      });
+
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      const doc = (await response.json()) as StoredDoc;
+      setDocs((current) =>
+        sortDocs([docSummary(doc), ...current.filter((d) => d.id !== doc.id)]),
+      );
+      await refreshTrash();
+      await loadDocument(doc.id);
+    },
+    [loadDocument, refreshTrash],
+  );
+
+  const purgeTrashDoc = useCallback(
+    async (trashId: string) => {
+      const confirmed = window.confirm(
+        "Permanently delete this document? This cannot be undone.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const response = await fetch(`/api/docs/trash/${trashId}`, {
+        method: "DELETE",
+      });
+
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      await refreshTrash();
+    },
+    [refreshTrash],
+  );
+
+  const emptyTrashAll = useCallback(async () => {
+    const confirmed = window.confirm(
+      "Permanently delete everything in the Trash? This cannot be undone.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await fetch("/api/docs/trash", { method: "DELETE" });
+    if (!response.ok) {
+      setSaveState("error");
+      return;
+    }
+
+    setTrashedDocs([]);
+  }, []);
+
+  const toggleHistory = useCallback(async () => {
+    if (historyOpen) {
+      setHistoryOpen(false);
+      return;
+    }
+    if (!activeIdRef.current) {
+      return;
+    }
+
+    setHistoryOpen(true);
+    try {
+      const response = await fetch(
+        `/api/docs/${activeIdRef.current}/history`,
+        { cache: "no-store" },
+      );
+      setVersions(response.ok ? ((await response.json()) as DocVersion[]) : []);
+    } catch {
+      setVersions([]);
+    }
+  }, [historyOpen]);
+
+  const restoreVersionInUi = useCallback(
+    async (versionId: string) => {
+      const id = activeIdRef.current;
+      if (!id) {
+        return;
+      }
+
+      const confirmed = window.confirm(
+        "Restore this version? Your current version is saved to history first, so you can undo this.",
+      );
+      if (!confirmed) {
+        return;
+      }
+
+      const response = await fetch(
+        `/api/docs/${id}/history/${versionId}/restore`,
+        { method: "POST" },
+      );
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+
+      setHistoryOpen(false);
+      await loadDocument(id);
+    },
+    [loadDocument],
+  );
 
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
@@ -1201,24 +1843,119 @@ export default function DocApp() {
             />
           </label>
 
-          <div className="doc-list" aria-label="Documents">
-            {filteredDocs.map((doc) => (
-              <button
-                className={classNames(
-                  "doc-row",
-                  doc.id === activeId && "is-active",
-                )}
-                key={doc.id}
-                onClick={() => loadAndMaybeClose(doc.id)}
-                type="button"
-              >
-                <span className="doc-row-title">{doc.title}</span>
-                <span className="doc-row-date">{formatDate(doc.updatedAt)}</span>
-                {doc.excerpt && (
-                  <span className="doc-row-excerpt">{doc.excerpt}</span>
-                )}
-              </button>
-            ))}
+          <section className="favorites-panel" aria-label="Favorite documents">
+            <div className="sidebar-section-heading">
+              <Star size={14} strokeWidth={2.2} />
+              <span>Favorites</span>
+              <span className="section-count">{favoriteDocs.length}</span>
+            </div>
+
+            <div className="favorite-list">
+              {favoriteDocs.length > 0 ? (
+                favoriteDocs.map((doc) => (
+                  <DocumentRow
+                    active={doc.id === activeId}
+                    compact
+                    doc={doc}
+                    key={doc.id}
+                    onOpen={loadAndMaybeClose}
+                    onToggleFavorite={(item) => void toggleFavorite(item)}
+                  />
+                ))
+              ) : (
+                <p className="empty-panel-note">
+                  {query.trim()
+                    ? "No matching favorites."
+                    : "Star docs to keep them here."}
+                </p>
+              )}
+            </div>
+          </section>
+
+          <section className="documents-panel" aria-label="Document library">
+            <div className="sidebar-section-heading">
+              <span>Library</span>
+              <span className="section-count">{regularDocs.length}</span>
+            </div>
+
+            <div className="doc-list" aria-label="Documents">
+              {regularDocs.length > 0 ? (
+                regularDocs.map((doc) => (
+                  <DocumentRow
+                    active={doc.id === activeId}
+                    doc={doc}
+                    key={doc.id}
+                    onOpen={loadAndMaybeClose}
+                    onToggleFavorite={(item) => void toggleFavorite(item)}
+                  />
+                ))
+              ) : (
+                <p className="empty-panel-note">
+                  {query.trim() ? "No documents found." : "No other docs."}
+                </p>
+              )}
+            </div>
+          </section>
+
+          {trashedDocs.length > 0 && (
+            <section className="trash-panel" aria-label="Trash">
+              <div className="sidebar-section-heading">
+                <Trash2 size={14} strokeWidth={2.2} />
+                <span>Trash</span>
+                <span className="section-count">{trashedDocs.length}</span>
+                <button
+                  className="trash-empty-button"
+                  onClick={() => void emptyTrashAll()}
+                  title="Permanently delete everything in the Trash"
+                  type="button"
+                >
+                  Empty
+                </button>
+              </div>
+
+              <div className="trash-list" aria-label="Trashed documents">
+                {trashedDocs.map((doc) => (
+                  <div className="trash-row" key={doc.trashId}>
+                    <div className="trash-row-main">
+                      <span className="trash-row-title">{doc.title}</span>
+                      <span className="trash-row-date">
+                        Deleted {formatDate(doc.deletedAt)}
+                      </span>
+                    </div>
+                    <button
+                      aria-label={`Restore ${doc.title}`}
+                      className="trash-action"
+                      onClick={() => void restoreDoc(doc.trashId)}
+                      title="Restore"
+                      type="button"
+                    >
+                      <RotateCcw size={15} />
+                    </button>
+                    <button
+                      aria-label={`Permanently delete ${doc.title}`}
+                      className="trash-action danger"
+                      onClick={() => void purgeTrashDoc(doc.trashId)}
+                      title="Delete forever"
+                      type="button"
+                    >
+                      <Trash2 size={15} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
+          <div className="sidebar-footer">
+            <a
+              className="backup-button"
+              href="/api/backup"
+              download
+              title="Download a backup of every document"
+            >
+              <Download size={15} />
+              <span>Export backup</span>
+            </a>
           </div>
         </div>
 
@@ -1272,6 +2009,89 @@ export default function DocApp() {
 
           <div className="header-actions">
             {saveState === "saving" && <Loader2 className="spin" size={18} />}
+            <div className="history-control">
+              <button
+                aria-label="Version history"
+                aria-expanded={historyOpen}
+                className={classNames(
+                  "icon-button history-button",
+                  historyOpen && "is-active",
+                )}
+                disabled={!activeId}
+                onClick={() => void toggleHistory()}
+                title="Version history"
+                type="button"
+              >
+                <History size={18} />
+              </button>
+              {historyOpen && (
+                <>
+                  <button
+                    aria-label="Close version history"
+                    className="history-backdrop"
+                    onClick={() => setHistoryOpen(false)}
+                    type="button"
+                  />
+                  <div className="history-panel" role="dialog" aria-label="Version history">
+                    <div className="history-panel-heading">
+                      <History size={15} />
+                      <span>Version history</span>
+                    </div>
+                    {versions.length > 0 ? (
+                      <div className="history-list">
+                        {versions.map((version) => (
+                          <div className="history-row" key={version.versionId}>
+                            <div className="history-row-main">
+                              <span className="history-row-time">
+                                {formatDate(version.savedAt)}
+                              </span>
+                              <span className="history-row-title">
+                                {version.title}
+                              </span>
+                            </div>
+                            <button
+                              className="history-restore"
+                              onClick={() =>
+                                void restoreVersionInUi(version.versionId)
+                              }
+                              type="button"
+                            >
+                              Restore
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="history-empty">
+                        No earlier versions yet. Snapshots are saved as you edit.
+                      </p>
+                    )}
+                  </div>
+                </>
+              )}
+            </div>
+            <button
+              aria-label={
+                activeDoc?.isFavorite
+                  ? "Remove from favorites"
+                  : "Add to favorites"
+              }
+              aria-pressed={activeDoc?.isFavorite ?? false}
+              className={classNames(
+                "icon-button favorite-header-button",
+                activeDoc?.isFavorite && "is-active",
+              )}
+              disabled={!activeDoc}
+              onClick={() => activeDoc && void toggleFavorite(activeDoc)}
+              title={
+                activeDoc?.isFavorite
+                  ? "Remove from favorites"
+                  : "Add to favorites"
+              }
+              type="button"
+            >
+              <Star size={18} strokeWidth={2.2} />
+            </button>
             <button
               aria-label="Delete document"
               className="icon-button danger"
@@ -1295,10 +2115,15 @@ export default function DocApp() {
           <DocumentUtilityBar
             headings={docStats.headings}
             onJumpToHeading={jumpToHeading}
+            onPageSettingsChange={setPageSettings}
             onScrollToBottom={() => scrollPaperTo("bottom")}
             onScrollToTop={() => scrollPaperTo("top")}
+            onZoomModeChange={setZoomMode}
+            pageCount={pageCount}
+            pageSettings={pageSettings}
             progress={scrollProgress}
             stats={docStats}
+            zoomMode={zoomMode}
           />
         </div>
 
@@ -1324,7 +2149,24 @@ export default function DocApp() {
           {bootError ? (
             <div className="boot-error">{bootError}</div>
           ) : (
-            <EditorContent editor={editor} />
+            <div className="page-viewport" style={pageViewportStyle}>
+              <div className="paper-stage" style={paperStageStyle}>
+                <div className="page-sheets" aria-hidden="true">
+                  {Array.from({ length: pageCount }, (_, index) => (
+                    <div
+                      className="page-sheet"
+                      data-page={index + 1}
+                      key={index}
+                      style={{ top: `${index * pageStride}px` }}
+                    />
+                  ))}
+                </div>
+                <EditorContent
+                  className="editor-content-shell"
+                  editor={editor}
+                />
+              </div>
+            </div>
           )}
         </div>
       </section>
