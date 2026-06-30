@@ -45,6 +45,35 @@ function isConnectionRefused(error: unknown): boolean {
   return false;
 }
 
+/**
+ * Resolve the model to actually use: the configured one if it's pulled,
+ * otherwise a sensible available fallback (preferring the same model family,
+ * e.g. another "llama*" tag). Keeps AI working out of the box even when the
+ * default model name isn't the one the user happens to have pulled.
+ */
+async function resolveModel(
+  config: AiConfig,
+  signal?: AbortSignal,
+): Promise<string> {
+  try {
+    const response = await fetch(`${config.host}/api/tags`, { signal });
+    if (!response.ok) {
+      return config.model;
+    }
+    const data = (await response.json()) as OllamaTagsResponse;
+    const models = (data.models ?? [])
+      .map((entry) => entry.name ?? entry.model ?? "")
+      .filter(Boolean);
+    if (models.length === 0 || models.includes(config.model)) {
+      return config.model;
+    }
+    const family = config.model.split(":")[0];
+    return models.find((name) => name.split(":")[0] === family) ?? models[0];
+  } catch {
+    return config.model;
+  }
+}
+
 export function createOllamaProvider(config: AiConfig): AiProvider {
   return {
     async generate({
@@ -58,11 +87,12 @@ export function createOllamaProvider(config: AiConfig): AiProvider {
       }
       messages.push({ role: "user", content: prompt });
 
+      const model = await resolveModel(config, signal);
       const response = await fetch(`${config.host}/api/chat`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model: config.model,
+          model,
           messages,
           stream: true,
         }),

@@ -1,5 +1,9 @@
 "use client";
 
+import AiAssistant, {
+  type AssistAction,
+  type AssistSelection,
+} from "@/components/ai-assistant";
 import { ChartBlock, SketchBlock } from "@/components/editor-blocks";
 import { MathBlock, MathInline } from "@/components/math-blocks";
 import {
@@ -61,6 +65,7 @@ import {
   PanelLeftClose,
   PanelLeftOpen,
   Pencil,
+  PenLine,
   Pilcrow,
   Quote,
   RectangleHorizontal,
@@ -70,7 +75,9 @@ import {
   Save,
   Search,
   Scaling,
+  ScrollText,
   Sigma,
+  SpellCheck,
   Square,
   SquareSigma,
   Star,
@@ -79,6 +86,7 @@ import {
   Underline as UnderlineIcon,
   Undo2,
   UserRound,
+  Wand2,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -563,12 +571,26 @@ function TextColorControl({
   );
 }
 
+const AI_ACTIONS: Array<{
+  action: AssistAction;
+  icon: LucideIcon;
+  label: string;
+  needsSelection: boolean;
+}> = [
+  { action: "continue", icon: PenLine, label: "Continue writing", needsSelection: false },
+  { action: "rewrite", icon: Wand2, label: "Rewrite selection", needsSelection: true },
+  { action: "summarize", icon: ScrollText, label: "Summarize selection", needsSelection: true },
+  { action: "fix-grammar", icon: SpellCheck, label: "Fix grammar", needsSelection: true },
+];
+
 function EditorToolbar({
   editor,
+  onAssist,
   onImage,
   onSave,
 }: {
   editor: Editor | null;
+  onAssist: (action: AssistAction) => void;
   onImage: () => void;
   onSave: () => void;
 }) {
@@ -847,6 +869,18 @@ function EditorToolbar({
       </ToolbarGroup>
 
       <ToolbarGroup>
+        {AI_ACTIONS.map((item) => (
+          <ToolbarButton
+            disabled={disabled}
+            icon={item.icon}
+            key={item.action}
+            label={item.label}
+            onClick={() => onAssist(item.action)}
+          />
+        ))}
+      </ToolbarGroup>
+
+      <ToolbarGroup>
         <ToolbarButton disabled={disabled} icon={Save} label="Save" onClick={onSave} />
       </ToolbarGroup>
     </div>
@@ -1117,6 +1151,10 @@ export default function DocApp() {
   const [editingTask, setEditingTask] = useState<{
     docId: string;
     index: number;
+  } | null>(null);
+  const [aiRequest, setAiRequest] = useState<{
+    action: AssistAction;
+    selection: AssistSelection;
   } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
@@ -1964,6 +2002,26 @@ export default function DocApp() {
     [patchTaskAttrs, refreshDocs, refreshTasks],
   );
 
+  const startAi = useCallback(
+    (action: AssistAction) => {
+      if (!editor) {
+        return;
+      }
+      const { from, to } = editor.state.selection;
+      const selected = editor.state.doc.textBetween(from, to, "\n");
+      // Rewrite/summarize/fix-grammar act on a selection; continue works from
+      // the caret, falling back to the preceding text as context.
+      if (action !== "continue" && !selected.trim()) {
+        return;
+      }
+      const text = selected.trim()
+        ? selected
+        : editor.state.doc.textBetween(Math.max(0, from - 1200), from, "\n");
+      setAiRequest({ action, selection: { from, to, text } });
+    },
+    [editor],
+  );
+
   const uploadImage = async (file: File) => {
     if (!activeId || !editor) {
       return;
@@ -2319,6 +2377,7 @@ export default function DocApp() {
         <div className="sticky-editor-bars">
           <EditorToolbar
             editor={editor}
+            onAssist={startAi}
             onImage={() => fileInputRef.current?.click()}
             onSave={() => void saveNow()}
           />
@@ -2381,6 +2440,15 @@ export default function DocApp() {
           )}
         </div>
       </section>
+
+      {aiRequest && editor && (
+        <AiAssistant
+          action={aiRequest.action}
+          editor={editor}
+          onClose={() => setAiRequest(null)}
+          selection={aiRequest.selection}
+        />
+      )}
 
       {tasksOpen && (
         <div className="tasks-overlay" role="dialog" aria-label="Tasks across all documents">
