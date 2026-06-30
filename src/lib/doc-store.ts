@@ -638,6 +638,100 @@ export async function exportBackup(): Promise<Backup> {
   };
 }
 
+export type Task = {
+  text: string;
+  checked: boolean;
+  index: number;
+};
+
+export type DocTasks = {
+  docId: string;
+  docTitle: string;
+  updatedAt: string;
+  openCount: number;
+  doneCount: number;
+  tasks: Task[];
+};
+
+type JsonNode = {
+  type?: string;
+  text?: string;
+  attrs?: { checked?: boolean };
+  content?: JsonValue;
+};
+
+/** Gather a task item's own label, without descending into nested checklists
+ *  (those become their own tasks). */
+function taskOwnText(node: JsonValue): string {
+  if (!node || typeof node !== "object") {
+    return "";
+  }
+  if (Array.isArray(node)) {
+    return node.map(taskOwnText).join("");
+  }
+  const n = node as JsonNode;
+  if (n.type === "taskList") {
+    return "";
+  }
+  if (typeof n.text === "string") {
+    return n.text;
+  }
+  return n.content ? taskOwnText(n.content) : "";
+}
+
+/** Tasks are derived from the checklist items already in each doc — there is
+ *  no separate task store to fall out of sync or lose. */
+function collectTasks(content: JsonValue): Task[] {
+  const tasks: Task[] = [];
+
+  const walk = (node: JsonValue) => {
+    if (!node || typeof node !== "object") {
+      return;
+    }
+    if (Array.isArray(node)) {
+      node.forEach(walk);
+      return;
+    }
+    const n = node as JsonNode;
+    if (n.type === "taskItem") {
+      tasks.push({
+        text: taskOwnText(n.content ?? null).replace(/\s+/g, " ").trim(),
+        checked: n.attrs?.checked === true,
+        index: tasks.length,
+      });
+    }
+    if (n.content) {
+      walk(n.content);
+    }
+  };
+
+  walk(content);
+  return tasks;
+}
+
+export async function listTasks(): Promise<DocTasks[]> {
+  const metas = await listDocs();
+  const grouped = await Promise.all(
+    metas.map(async (meta) => {
+      const content = await readJson<JsonValue | null>(
+        contentPath(meta.id),
+        null,
+      );
+      const tasks = content ? collectTasks(content) : [];
+      return {
+        docId: meta.id,
+        docTitle: meta.title,
+        updatedAt: meta.updatedAt,
+        openCount: tasks.filter((task) => !task.checked).length,
+        doneCount: tasks.filter((task) => task.checked).length,
+        tasks,
+      } satisfies DocTasks;
+    }),
+  );
+
+  return grouped.filter((doc) => doc.tasks.length > 0);
+}
+
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
   await readMeta(id);
   const dir = assetsDir(id);
