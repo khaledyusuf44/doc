@@ -638,11 +638,38 @@ export async function exportBackup(): Promise<Backup> {
   };
 }
 
-export type Task = {
+export type TaskPriority = "low" | "med" | "high";
+
+export type TaskMeta = {
+  dueDate: string | null;
+  priority: TaskPriority | null;
+  assignee: string | null;
+};
+
+export type Task = TaskMeta & {
   text: string;
   checked: boolean;
   index: number;
 };
+
+function normalizeTaskMeta(attrs?: {
+  dueDate?: unknown;
+  priority?: unknown;
+  assignee?: unknown;
+}): TaskMeta {
+  const due = typeof attrs?.dueDate === "string" ? attrs.dueDate.trim() : "";
+  const assignee =
+    typeof attrs?.assignee === "string" ? attrs.assignee.trim() : "";
+  const priority = attrs?.priority;
+  return {
+    dueDate: due || null,
+    priority:
+      priority === "low" || priority === "med" || priority === "high"
+        ? priority
+        : null,
+    assignee: assignee || null,
+  };
+}
 
 export type DocTasks = {
   docId: string;
@@ -656,7 +683,12 @@ export type DocTasks = {
 type JsonNode = {
   type?: string;
   text?: string;
-  attrs?: { checked?: boolean };
+  attrs?: {
+    checked?: boolean;
+    dueDate?: unknown;
+    priority?: unknown;
+    assignee?: unknown;
+  };
   content?: JsonValue;
 };
 
@@ -698,6 +730,7 @@ function collectTasks(content: JsonValue): Task[] {
         text: taskOwnText(n.content ?? null).replace(/\s+/g, " ").trim(),
         checked: n.attrs?.checked === true,
         index: tasks.length,
+        ...normalizeTaskMeta(n.attrs),
       });
     }
     if (n.content) {
