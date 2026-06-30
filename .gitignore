@@ -42,3 +42,6 @@ next-env.d.ts
 
 # local documents
 /local-docs/
+
+# Claude Code agent worktrees (internal, never commit)
+.claude/worktrees/

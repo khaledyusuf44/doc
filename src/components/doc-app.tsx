@@ -14,7 +14,7 @@ import Image from "@tiptap/extension-image";
 import Link from "@tiptap/extension-link";
 import Placeholder from "@tiptap/extension-placeholder";
 import { Table, TableCell, TableHeader, TableRow } from "@tiptap/extension-table";
-import TaskItem from "@tiptap/extension-task-item";
+import { TaskItemWithMeta } from "@/components/task-item";
 import TaskList from "@tiptap/extension-task-list";
 import TextAlign from "@tiptap/extension-text-align";
 import {
@@ -35,6 +35,7 @@ import {
   Bold,
   BookOpen,
   Brush,
+  CalendarDays,
   CheckSquare,
   Clock3,
   Code2,
@@ -59,6 +60,7 @@ import {
   Palette,
   PanelLeftClose,
   PanelLeftOpen,
+  Pencil,
   Pilcrow,
   Quote,
   RectangleHorizontal,
@@ -76,6 +78,7 @@ import {
   Trash2,
   Underline as UnderlineIcon,
   Undo2,
+  UserRound,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -118,10 +121,15 @@ type DocVersion = {
   title: string;
 };
 
+type TaskPriority = "low" | "med" | "high";
+
 type Task = {
   text: string;
   checked: boolean;
   index: number;
+  dueDate: string | null;
+  priority: TaskPriority | null;
+  assignee: string | null;
 };
 
 type DocTasks = {
@@ -259,6 +267,27 @@ function formatDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+const PRIORITY_LABEL: Record<TaskPriority, string> = {
+  low: "Low",
+  med: "Med",
+  high: "High",
+};
+
+function formatDueDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function isOverdue(dueDate: string) {
+  return dueDate < new Date().toISOString().slice(0, 10);
 }
 
 function docSummary(doc: StoredDoc): DocMeta {
@@ -1085,6 +1114,10 @@ export default function DocApp() {
   const [taskGroups, setTaskGroups] = useState<DocTasks[]>([]);
   const [tasksOpen, setTasksOpen] = useState(false);
   const [taskFilter, setTaskFilter] = useState<TaskFilter>("open");
+  const [editingTask, setEditingTask] = useState<{
+    docId: string;
+    index: number;
+  } | null>(null);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [title, setTitle] = useState("Untitled");
   const [query, setQuery] = useState("");
@@ -1186,7 +1219,7 @@ export default function DocApp() {
         inline: false,
       }),
       TaskList,
-      TaskItem.configure({
+      TaskItemWithMeta.configure({
         nested: true,
       }),
       Table.configure({
@@ -1820,6 +1853,51 @@ export default function DocApp() {
     [loadDocument],
   );
 
+  // Write task attributes (checked and/or metadata). For the doc that is open
+  // in the editor we apply the change as a TipTap transaction so the editor's
+  // own autosave persists it — going server-side there would race a pending
+  // autosave that could revert the change. Other docs patch via the API.
+  const patchTaskAttrs = useCallback(
+    async (
+      docId: string,
+      index: number,
+      patch: Record<string, boolean | string | null>,
+    ) => {
+      if (activeIdRef.current === docId && editor) {
+        let counter = 0;
+        let targetPos = -1;
+        editor.state.doc.descendants((node, pos) => {
+          if (node.type.name === "taskItem") {
+            if (counter === index) {
+              targetPos = pos;
+            }
+            counter += 1;
+          }
+        });
+        if (targetPos >= 0) {
+          const node = editor.state.doc.nodeAt(targetPos);
+          if (node) {
+            editor.view.dispatch(
+              editor.state.tr.setNodeMarkup(targetPos, undefined, {
+                ...node.attrs,
+                ...patch,
+              }),
+            );
+          }
+        }
+        return true;
+      }
+
+      const response = await fetch(`/api/docs/${docId}/tasks`, {
+        body: JSON.stringify({ index, ...patch }),
+        headers: { "Content-Type": "application/json" },
+        method: "POST",
+      });
+      return response.ok;
+    },
+    [editor],
+  );
+
   const toggleTask = useCallback(
     async (docId: string, index: number, nextChecked: boolean) => {
       // Optimistically flip the item so the checkbox responds instantly.
@@ -1841,18 +1919,8 @@ export default function DocApp() {
       );
 
       try {
-        const response = await fetch(`/api/docs/${docId}/tasks`, {
-          body: JSON.stringify({ index, checked: nextChecked }),
-          headers: { "Content-Type": "application/json" },
-          method: "POST",
-        });
-        if (!response.ok) {
+        if (!(await patchTaskAttrs(docId, index, { checked: nextChecked }))) {
           throw new Error("Could not update task");
-        }
-        // If this doc is open in the editor, reload it so the editor's next
-        // autosave doesn't overwrite the toggle with stale in-memory content.
-        if (activeIdRef.current === docId) {
-          await loadDocument(docId);
         }
         void refreshDocs();
       } catch {
@@ -1860,7 +1928,40 @@ export default function DocApp() {
         void refreshTasks(); // fall back to server truth
       }
     },
-    [loadDocument, refreshDocs, refreshTasks],
+    [patchTaskAttrs, refreshDocs, refreshTasks],
+  );
+
+  const updateTaskMeta = useCallback(
+    async (
+      docId: string,
+      index: number,
+      patch: { dueDate?: string | null; priority?: TaskPriority | null; assignee?: string | null },
+    ) => {
+      // Optimistically apply the patch so the controls feel instant.
+      setTaskGroups((groups) =>
+        groups.map((group) =>
+          group.docId !== docId
+            ? group
+            : {
+                ...group,
+                tasks: group.tasks.map((task) =>
+                  task.index === index ? { ...task, ...patch } : task,
+                ),
+              },
+        ),
+      );
+
+      try {
+        if (!(await patchTaskAttrs(docId, index, patch))) {
+          throw new Error("Could not update task");
+        }
+        void refreshDocs();
+      } catch {
+        setSaveState("error");
+        void refreshTasks();
+      }
+    },
+    [patchTaskAttrs, refreshDocs, refreshTasks],
   );
 
   const uploadImage = async (file: File) => {
@@ -2286,7 +2387,10 @@ export default function DocApp() {
           <button
             aria-label="Close tasks"
             className="tasks-backdrop"
-            onClick={() => setTasksOpen(false)}
+            onClick={() => {
+              setTasksOpen(false);
+              setEditingTask(null);
+            }}
             type="button"
           />
           <div className="tasks-modal">
@@ -2317,7 +2421,10 @@ export default function DocApp() {
               <button
                 aria-label="Close tasks"
                 className="tasks-close"
-                onClick={() => setTasksOpen(false)}
+                onClick={() => {
+              setTasksOpen(false);
+              setEditingTask(null);
+            }}
                 type="button"
               >
                 <X size={18} />
@@ -2332,6 +2439,7 @@ export default function DocApp() {
                       className="tasks-group-title"
                       onClick={() => {
                         setTasksOpen(false);
+                        setEditingTask(null);
                         loadAndMaybeClose(group.docId);
                       }}
                       title={`Open ${group.docTitle}`}
@@ -2343,14 +2451,18 @@ export default function DocApp() {
                         {group.openCount} open
                       </span>
                     </button>
-                    {group.tasks.map((task) => (
-                      <div
-                        className={classNames(
-                          "task-row",
-                          task.checked && "is-done",
-                        )}
-                        key={task.index}
-                      >
+                    {group.tasks.map((task) => {
+                      const editing =
+                        editingTask?.docId === group.docId &&
+                        editingTask?.index === task.index;
+                      return (
+                        <div className="task-item-wrap" key={task.index}>
+                          <div
+                            className={classNames(
+                              "task-row",
+                              task.checked && "is-done",
+                            )}
+                          >
                         <button
                           aria-label={
                             task.checked ? "Mark as not done" : "Mark as done"
@@ -2372,11 +2484,143 @@ export default function DocApp() {
                             <Square size={15} />
                           )}
                         </button>
-                        <span className="task-text">
-                          {task.text || "Untitled task"}
-                        </span>
-                      </div>
-                    ))}
+                        <div className="task-body">
+                          <span className="task-text">
+                            {task.text || "Untitled task"}
+                          </span>
+                          {(task.dueDate ||
+                            task.priority ||
+                            task.assignee) && (
+                            <span className="task-meta">
+                              {task.dueDate && (
+                                <span
+                                  className={classNames(
+                                    "task-pill task-due",
+                                    !task.checked &&
+                                      isOverdue(task.dueDate) &&
+                                      "is-overdue",
+                                  )}
+                                >
+                                  <CalendarDays size={12} />
+                                  {formatDueDate(task.dueDate)}
+                                </span>
+                              )}
+                              {task.priority && (
+                                <span
+                                  className={classNames(
+                                    "task-pill task-priority",
+                                    `prio-${task.priority}`,
+                                  )}
+                                >
+                                  {PRIORITY_LABEL[task.priority]}
+                                </span>
+                              )}
+                              {task.assignee && (
+                                <span className="task-pill task-assignee">
+                                  <UserRound size={12} />
+                                  {task.assignee}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </div>
+                            <button
+                              aria-label="Edit task details"
+                              aria-pressed={editing}
+                              className={classNames(
+                                "task-edit",
+                                editing && "is-active",
+                              )}
+                              onClick={() =>
+                                setEditingTask(
+                                  editing
+                                    ? null
+                                    : { docId: group.docId, index: task.index },
+                                )
+                              }
+                              type="button"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          </div>
+                          {editing && (
+                            <div className="task-editor">
+                              <label className="task-editor-field">
+                                <CalendarDays size={13} />
+                                <input
+                                  aria-label="Due date"
+                                  defaultValue={task.dueDate ?? ""}
+                                  onChange={(event) =>
+                                    void updateTaskMeta(
+                                      group.docId,
+                                      task.index,
+                                      {
+                                        dueDate:
+                                          event.currentTarget.value || null,
+                                      },
+                                    )
+                                  }
+                                  type="date"
+                                />
+                              </label>
+                              <div
+                                aria-label="Priority"
+                                className="task-editor-prio"
+                                role="group"
+                              >
+                                {(["low", "med", "high"] as const).map(
+                                  (prio) => (
+                                    <button
+                                      aria-pressed={task.priority === prio}
+                                      className={classNames(
+                                        "task-prio-btn",
+                                        `prio-${prio}`,
+                                        task.priority === prio && "is-active",
+                                      )}
+                                      key={prio}
+                                      onClick={() =>
+                                        void updateTaskMeta(
+                                          group.docId,
+                                          task.index,
+                                          {
+                                            priority:
+                                              task.priority === prio
+                                                ? null
+                                                : prio,
+                                          },
+                                        )
+                                      }
+                                      type="button"
+                                    >
+                                      {PRIORITY_LABEL[prio]}
+                                    </button>
+                                  ),
+                                )}
+                              </div>
+                              <label className="task-editor-field">
+                                <UserRound size={13} />
+                                <input
+                                  aria-label="Assignee"
+                                  defaultValue={task.assignee ?? ""}
+                                  onBlur={(event) =>
+                                    void updateTaskMeta(
+                                      group.docId,
+                                      task.index,
+                                      {
+                                        assignee:
+                                          event.currentTarget.value || null,
+                                      },
+                                    )
+                                  }
+                                  placeholder="Assignee"
+                                  type="text"
+                                />
+                              </label>
+                            </div>
+                          )}
+                        </div>
+                      );
+                    })}
                   </div>
                 ))
               ) : (
