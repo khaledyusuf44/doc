@@ -2354,3 +2354,132 @@ button {
     grid-template-columns: minmax(76px, 0.9fr) minmax(80px, 1.6fr) 40px;
   }
 }
+
+.ai-assistant-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 60;
+  appearance: none;
+  background: rgba(31, 41, 36, 0.34);
+  border: 0;
+  cursor: default;
+}
+
+.ai-assistant-panel {
+  position: fixed;
+  top: 96px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 61;
+  display: flex;
+  flex-direction: column;
+  width: min(440px, calc(100vw - 32px));
+  max-height: min(520px, 80dvh);
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: var(--shadow);
+  overflow: hidden;
+}
+
+.ai-assistant-heading {
+  align-items: center;
+  border-bottom: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  padding: 12px 14px;
+}
+
+.ai-assistant-title {
+  align-items: center;
+  background: var(--accent-soft);
+  border-radius: 6px;
+  color: var(--accent);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 760;
+  letter-spacing: 0.04em;
+  padding: 3px 8px;
+}
+
+.ai-assistant-action-label {
+  color: var(--foreground);
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.ai-assistant-status {
+  color: var(--muted);
+  font-size: 12px;
+  margin-left: auto;
+}
+
+.ai-assistant-body {
+  min-height: 64px;
+  overflow: auto;
+  padding: 14px;
+}
+
+.ai-assistant-output {
+  color: var(--foreground);
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 0;
+  white-space: pre-wrap;
+}
+
+.ai-assistant-placeholder {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.ai-assistant-error {
+  color: #b91c1c;
+  font-size: 13px;
+  line-height: 1.5;
+  margin: 0;
+}
+
+.ai-assistant-actions {
+  border-top: 1px solid var(--line);
+  display: flex;
+  gap: 8px;
+  justify-content: flex-end;
+  padding: 12px 14px;
+}
+
+.ai-assistant-button {
+  appearance: none;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  padding: 7px 14px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.ai-assistant-button.is-ghost {
+  background: transparent;
+  border: 1px solid var(--line-strong);
+  color: var(--muted-strong);
+}
+
+.ai-assistant-button.is-ghost:hover {
+  background: var(--panel-soft);
+  color: var(--foreground);
+}
+
+.ai-assistant-button.is-primary {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+}
+
+.ai-assistant-button.is-primary:hover {
+  filter: brightness(1.05);
+}
+
+.ai-assistant-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
