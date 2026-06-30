@@ -38,6 +38,7 @@ import {
   CheckSquare,
   Clock3,
   Code2,
+  Download,
   Eraser,
   FilePlus2,
   FileText,
@@ -1944,6 +1945,18 @@ export default function DocApp() {
               </div>
             </section>
           )}
+
+          <div className="sidebar-footer">
+            <a
+              className="backup-button"
+              href="/api/backup"
+              download
+              title="Download a backup of every document"
+            >
+              <Download size={15} />
+              <span>Export backup</span>
+            </a>
+          </div>
         </div>
 
         <div className="sidebar-rail-actions" aria-hidden={sidebarOpen}>

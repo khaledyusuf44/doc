@@ -588,6 +588,56 @@ export async function restoreVersion(
   });
 }
 
+export type BackupAsset = {
+  name: string;
+  base64: string;
+};
+
+export type BackupDoc = StoredDoc & {
+  assets: BackupAsset[];
+};
+
+export type Backup = {
+  version: 1;
+  exportedAt: string;
+  docs: BackupDoc[];
+};
+
+async function readDocAssets(id: string): Promise<BackupAsset[]> {
+  const dir = assetsDir(id);
+  const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+  return Promise.all(
+    entries
+      .filter((entry) => entry.isFile())
+      .map(async (entry) => ({
+        name: entry.name,
+        base64: (await readFile(path.join(dir, entry.name))).toString("base64"),
+      })),
+  );
+}
+
+/**
+ * Bundle the whole live library — every doc's content, html, markdown and
+ * binary assets — into one self-contained JSON object the user can stash
+ * anywhere. Self-contained so it never depends on the rest of the filesystem.
+ */
+export async function exportBackup(): Promise<Backup> {
+  const metas = await listDocs();
+  const docs = await Promise.all(
+    metas.map(async (meta) => {
+      const doc = await getDoc(meta.id);
+      const assets = await readDocAssets(meta.id);
+      return { ...doc, assets } satisfies BackupDoc;
+    }),
+  );
+
+  return {
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    docs,
+  };
+}
+
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {
   await readMeta(id);
   const dir = assetsDir(id);
