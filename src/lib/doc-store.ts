@@ -765,21 +765,55 @@ export async function listTasks(): Promise<DocTasks[]> {
   return grouped.filter((doc) => doc.tasks.length > 0);
 }
 
+export type TaskAttrPatch = {
+  checked?: boolean;
+  dueDate?: string | null;
+  priority?: TaskPriority | null;
+  assignee?: string | null;
+};
+
+/** Build the validated attribute patch actually written onto the task node. */
+function cleanTaskPatch(patch: TaskAttrPatch): Record<string, JsonValue> {
+  const next: Record<string, JsonValue> = {};
+  if (typeof patch.checked === "boolean") {
+    next.checked = patch.checked;
+  }
+  if ("dueDate" in patch) {
+    const due = typeof patch.dueDate === "string" ? patch.dueDate.trim() : "";
+    next.dueDate = due || null;
+  }
+  if ("priority" in patch) {
+    next.priority =
+      patch.priority === "low" ||
+      patch.priority === "med" ||
+      patch.priority === "high"
+        ? patch.priority
+        : null;
+  }
+  if ("assignee" in patch) {
+    const who = typeof patch.assignee === "string" ? patch.assignee.trim() : "";
+    next.assignee = who || null;
+  }
+  return next;
+}
+
 /**
- * Flip a single checklist item's checked state, identified by its position in
- * the same depth-first order collectTasks uses. Goes through updateDoc, so the
- * change is atomic and snapshotted into history like any other edit.
+ * Patch a single checklist item's attributes (checked and/or metadata),
+ * identified by its position in the same depth-first order collectTasks uses.
+ * Goes through updateDoc, so the change is atomic and snapshotted into history
+ * like any other edit.
  */
-export async function setTaskChecked(
+export async function setTaskAttrs(
   id: string,
   index: number,
-  checked: boolean,
+  patch: TaskAttrPatch,
 ): Promise<StoredDoc> {
   const doc = await getDoc(id);
   if (!doc.content) {
     throw new Error("Document has no content");
   }
 
+  const cleaned = cleanTaskPatch(patch);
   const content = JSON.parse(JSON.stringify(doc.content)) as JsonValue;
   let counter = 0;
   let found = false;
@@ -799,7 +833,7 @@ export async function setTaskChecked(
     };
     if (n.type === "taskItem") {
       if (counter === index) {
-        n.attrs = { ...(n.attrs ?? {}), checked };
+        n.attrs = { ...(n.attrs ?? {}), ...cleaned };
         found = true;
       }
       counter += 1;
@@ -815,6 +849,11 @@ export async function setTaskChecked(
   }
 
   return updateDoc(id, { content });
+}
+
+/** Convenience wrapper for the toggle path. */
+export function setTaskChecked(id: string, index: number, checked: boolean) {
+  return setTaskAttrs(id, index, { checked });
 }
 
 export async function saveAsset(id: string, file: File): Promise<AssetInfo> {

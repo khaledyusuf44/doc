@@ -837,6 +837,7 @@ button {
 
 .task-body {
   display: flex;
+  flex: 1 1 auto;
   flex-direction: column;
   gap: 4px;
   min-width: 0;
@@ -892,6 +893,108 @@ button {
   background: var(--accent-soft);
   border-color: #cdddfb;
   color: var(--accent);
+}
+
+.task-item-wrap {
+  display: flex;
+  flex-direction: column;
+}
+
+.task-edit {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 6px;
+  color: var(--muted);
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 26px;
+  justify-content: center;
+  opacity: 0;
+  transition: opacity 140ms ease, background 140ms ease, color 140ms ease;
+  width: 26px;
+}
+
+.task-row:hover .task-edit,
+.task-edit.is-active {
+  opacity: 1;
+}
+
+.task-edit:hover,
+.task-edit.is-active {
+  background: var(--panel-soft);
+  color: var(--accent);
+}
+
+.task-editor {
+  align-items: center;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 2px 0 6px 33px;
+  padding: 8px 10px;
+}
+
+.task-editor-field {
+  align-items: center;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 5px;
+}
+
+.task-editor-field input {
+  appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--foreground);
+  font-size: 12px;
+  padding: 4px 7px;
+}
+
+.task-editor-field input[type="text"] {
+  width: 110px;
+}
+
+.task-editor-prio {
+  display: inline-flex;
+  gap: 4px;
+}
+
+.task-prio-btn {
+  appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted);
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 4px 9px;
+  transition: background 140ms ease, border-color 140ms ease, color 140ms ease;
+}
+
+.task-prio-btn.is-active.prio-high {
+  background: #fdeaea;
+  border-color: #f3cfcf;
+  color: #c2410c;
+}
+
+.task-prio-btn.is-active.prio-med {
+  background: #fdf3e7;
+  border-color: #f1ddc2;
+  color: #b45309;
+}
+
+.task-prio-btn.is-active.prio-low {
+  background: #eef3ee;
+  border-color: #d8e3d8;
+  color: #4b7553;
 }
 
 .sidebar-section-heading {
