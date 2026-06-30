@@ -893,3 +893,271 @@ export async function getAsset(id: string, segments: string[]) {
     bytes: await readFile(filePath),
   };
 }
+
+// ---------------------------------------------------------------------------
+// Git-tracked shared docs
+//
+// local-docs/ is private and git-IGNORED. shared-docs/ is git-TRACKED so it
+// can travel through a shared repo: "publish" copies a local doc into
+// shared-docs/<localId>/, collaborators `git pull`, and "import" copies a
+// shared doc into THEIR local-docs/ as a brand-new doc.
+//
+// HARD INVARIANT: import is ALWAYS copy-as-new — it mints a fresh local id and
+// refuses to touch an existing local doc, so a pull-then-import can never
+// overwrite or lose someone's work.
+// ---------------------------------------------------------------------------
+
+const SHARED_DIR = path.join(process.cwd(), "shared-docs");
+
+// The four content files that make up a doc on disk. .history/ and .trash/ are
+// deliberately NOT shared — only the current state of the doc travels.
+const SHARED_CONTENT_FILES = [
+  "meta.json",
+  "content.json",
+  "content.html",
+  "content.md",
+] as const;
+
+export type SharedDocMeta = DocMeta & {
+  // Folder name under shared-docs/ and the key used to import/unpublish. Equal
+  // to the publisher's local id.
+  sharedId: string;
+  originLocalId: string;
+  publishedAt: string;
+};
+
+// Sidecar written next to the copied content files. Keeps the provenance and
+// publish time out of meta.json, which stays a faithful copy of the original.
+type SharedSidecar = {
+  sharedId: string;
+  originLocalId: string;
+  title: string;
+  publishedAt: string;
+};
+
+function sharedDocDir(sharedId: string) {
+  assertSafeId(sharedId);
+  return path.join(SHARED_DIR, sharedId);
+}
+
+/**
+ * Strict JSON read that THROWS on a missing or unparseable file. Used for the
+ * files that must not silently degrade to an empty doc — e.g. a git-conflicted
+ * content.json should surface a loud error, not import a blank document.
+ */
+async function readJsonStrict<T>(filePath: string): Promise<T> {
+  return JSON.parse(await readFile(filePath, "utf8")) as T;
+}
+
+/** Recursively copy a directory's contents. No-op if the source is absent
+ *  (e.g. a doc that never had any assets). Files are copied via
+ *  writeFileAtomic so a copy is never observed half-written. */
+async function copyDirRecursive(src: string, dest: string) {
+  if (!(await pathExists(src))) {
+    return;
+  }
+  const entries = await readdir(src, { withFileTypes: true });
+  await mkdir(dest, { recursive: true });
+  for (const entry of entries) {
+    const from = path.join(src, entry.name);
+    const to = path.join(dest, entry.name);
+    if (entry.isDirectory()) {
+      await copyDirRecursive(from, to);
+    } else if (entry.isFile()) {
+      await writeFileAtomic(to, await readFile(from));
+    }
+  }
+}
+
+/**
+ * List every published doc. Reads each folder's meta.json (strict) plus its
+ * shared.json sidecar for provenance/publish time. A meta that fails to parse
+ * — typically because git left conflict markers in it — is skipped with a
+ * console.warn rather than silently dropping the whole list to empty.
+ */
+export async function listSharedDocs(): Promise<SharedDocMeta[]> {
+  if (!(await pathExists(SHARED_DIR))) {
+    return [];
+  }
+
+  const entries = await readdir(SHARED_DIR, { withFileTypes: true });
+  const docs = await Promise.all(
+    entries
+      // Skip dot-dirs (covers in-flight .tmp-* publishes) — never addressable.
+      .filter((entry) => entry.isDirectory() && !entry.name.startsWith("."))
+      .map(async (entry) => {
+        const sharedId = entry.name;
+        try {
+          const meta = await readJsonStrict<StoredMeta>(
+            path.join(SHARED_DIR, sharedId, "meta.json"),
+          );
+          const sidecar = await readJson<SharedSidecar | null>(
+            path.join(SHARED_DIR, sharedId, "shared.json"),
+            null,
+          );
+          return {
+            ...meta,
+            isFavorite: meta.isFavorite === true,
+            pageSettings: normalizePageSettings(meta.pageSettings),
+            sharedId,
+            originLocalId: sidecar?.originLocalId ?? sharedId,
+            publishedAt: sidecar?.publishedAt ?? meta.updatedAt ?? "",
+          } satisfies SharedDocMeta;
+        } catch (error) {
+          console.warn(
+            `Skipping unreadable shared doc "${sharedId}": ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+          return null;
+        }
+      }),
+  );
+
+  return docs
+    .filter((doc): doc is SharedDocMeta => Boolean(doc))
+    .sort(
+      (a, b) =>
+        new Date(b.publishedAt).getTime() - new Date(a.publishedAt).getTime(),
+    );
+}
+
+/**
+ * Publish a local doc into shared-docs/<localId>/. Builds the folder in a
+ * temp dir first, then swaps it into place (rm old + rename) so a reader never
+ * sees a half-copied doc. Only the current state travels — .history/ and
+ * .trash/ are not copied.
+ */
+export async function publishDoc(localId: string): Promise<SharedDocMeta> {
+  // Validates the id and throws "Document not found" if it isn't a real doc.
+  const meta = await readMeta(localId);
+
+  await mkdir(SHARED_DIR, { recursive: true });
+  const tempDir = path.join(
+    SHARED_DIR,
+    `.tmp-${localId}-${randomUUID().slice(0, 8)}`,
+  );
+
+  try {
+    await mkdir(tempDir, { recursive: true });
+
+    for (const name of SHARED_CONTENT_FILES) {
+      const source = path.join(docDir(localId), name);
+      if (await pathExists(source)) {
+        await writeFileAtomic(path.join(tempDir, name), await readFile(source));
+      }
+    }
+    await copyDirRecursive(assetsDir(localId), path.join(tempDir, "assets"));
+
+    const publishedAt = new Date().toISOString();
+    const sidecar: SharedSidecar = {
+      sharedId: localId,
+      originLocalId: localId,
+      title: meta.title,
+      publishedAt,
+    };
+    await writeJson(path.join(tempDir, "shared.json"), sidecar);
+
+    // Atomic-ish swap: drop any prior publish of this id, then move temp in.
+    const target = sharedDocDir(localId);
+    await rm(target, { recursive: true, force: true });
+    await rename(tempDir, target);
+
+    return {
+      ...meta,
+      sharedId: localId,
+      originLocalId: localId,
+      publishedAt,
+    };
+  } catch (error) {
+    await rm(tempDir, { recursive: true, force: true });
+    throw error;
+  }
+}
+
+/**
+ * Import a shared doc into the local library as a BRAND-NEW doc. This is the
+ * core safety invariant of the feature: a fresh local id is minted and we
+ * refuse to proceed if that id somehow already exists, so importing can never
+ * overwrite or merge into an existing local doc.
+ *
+ * Asset URLs embedded in the content are rewritten from the shared doc's id to
+ * the new local id (/api/docs/<sharedId>/assets/ -> /api/docs/<newId>/assets/)
+ * so images keep resolving against the importer's own copy of the assets.
+ */
+export async function importSharedDoc(sharedId: string): Promise<StoredDoc> {
+  const sourceDir = sharedDocDir(sharedId); // validates sharedId
+  if (!(await pathExists(sourceDir))) {
+    throw new Error("Shared document not found");
+  }
+
+  const sidecar = await readJson<SharedSidecar | null>(
+    path.join(sourceDir, "shared.json"),
+    null,
+  );
+  // Strict: a git-conflicted meta.json should fail loudly, not import blank.
+  const sourceMeta = await readJsonStrict<StoredMeta>(
+    path.join(sourceDir, "meta.json"),
+  );
+  const title = cleanTitle(sidecar?.title ?? sourceMeta.title);
+
+  const newId = createId(title);
+  const target = docDir(newId);
+  // HARD INVARIANT — never overwrite an existing local doc.
+  if (await pathExists(target)) {
+    throw new Error("A document with that id already exists");
+  }
+
+  await mkdir(assetsDir(newId), { recursive: true });
+
+  // Rewrite the publisher's asset URLs to point at the new local id.
+  const fromUrl = `/api/docs/${sharedId}/assets/`;
+  const toUrl = `/api/docs/${newId}/assets/`;
+  const rewrite = (text: string) => text.split(fromUrl).join(toUrl);
+
+  // Strict read so a conflicted content.json throws instead of importing an
+  // empty doc. Rewrite happens on the serialized string — asset URLs are plain
+  // JSON string values, so substring replacement keeps the JSON valid.
+  const content = await readJsonStrict<JsonValue>(
+    path.join(sourceDir, "content.json"),
+  );
+  const contentText = rewrite(`${JSON.stringify(content, null, 2)}\n`);
+  const html = rewrite(
+    await readFile(path.join(sourceDir, "content.html"), "utf8").catch(
+      () => "",
+    ),
+  );
+  const markdown = rewrite(
+    await readFile(path.join(sourceDir, "content.md"), "utf8").catch(() => ""),
+  );
+
+  await copyDirRecursive(path.join(sourceDir, "assets"), assetsDir(newId));
+
+  const now = new Date().toISOString();
+  const meta: DocMeta = {
+    id: newId,
+    title,
+    createdAt: now,
+    updatedAt: now,
+    isFavorite: false,
+    tags: Array.isArray(sourceMeta.tags) ? sourceMeta.tags : [],
+    excerpt: typeof sourceMeta.excerpt === "string" ? sourceMeta.excerpt : "",
+    markdownPath: path.relative(process.cwd(), markdownPath(newId)),
+    pageSettings: normalizePageSettings(sourceMeta.pageSettings),
+  };
+
+  await Promise.all([
+    writeJson(metaPath(newId), meta),
+    writeFileAtomic(contentPath(newId), contentText),
+    writeFileAtomic(htmlPath(newId), html),
+    writeFileAtomic(markdownPath(newId), markdown),
+  ]);
+
+  return getDoc(newId);
+}
+
+/** Remove a doc from shared-docs/. Local copies (the publisher's and any
+ *  importers') are untouched. */
+export async function unpublishDoc(sharedId: string): Promise<void> {
+  await rm(sharedDocDir(sharedId), { recursive: true, force: true });
+}

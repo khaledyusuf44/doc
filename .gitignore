@@ -40,8 +40,11 @@ yarn-error.log*
 *.tsbuildinfo
 next-env.d.ts
 
-# local documents
+# local documents (private, never committed)
 /local-docs/
 
 # Claude Code agent worktrees (internal, never commit)
 .claude/worktrees/
+
+# shared documents are git-TRACKED so they travel through the shared repo
+!/shared-docs/
