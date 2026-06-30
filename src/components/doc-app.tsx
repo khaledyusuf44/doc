@@ -76,6 +76,7 @@ import {
   Search,
   Scaling,
   ScrollText,
+  Share2,
   Sigma,
   SpellCheck,
   Square,
@@ -121,6 +122,12 @@ type StoredDoc = DocMeta & {
 type TrashedDoc = DocMeta & {
   trashId: string;
   deletedAt: string;
+};
+
+type SharedDocMeta = DocMeta & {
+  sharedId: string;
+  originLocalId: string;
+  publishedAt: string;
 };
 
 type DocVersion = {
@@ -1143,6 +1150,7 @@ function DocumentRow({
 export default function DocApp() {
   const [docs, setDocs] = useState<DocMeta[]>([]);
   const [trashedDocs, setTrashedDocs] = useState<TrashedDoc[]>([]);
+  const [sharedDocs, setSharedDocs] = useState<SharedDocMeta[]>([]);
   const [versions, setVersions] = useState<DocVersion[]>([]);
   const [historyOpen, setHistoryOpen] = useState(false);
   const [taskGroups, setTaskGroups] = useState<DocTasks[]>([]);
@@ -1446,6 +1454,18 @@ export default function DocApp() {
     void refreshTasks();
   }, [refreshTasks]);
 
+  const refreshShared = useCallback(async () => {
+    try {
+      const response = await fetch("/api/shared", { cache: "no-store" });
+      if (!response.ok) {
+        return;
+      }
+      setSharedDocs((await response.json()) as SharedDocMeta[]);
+    } catch {
+      // Shared list is best-effort; never block the editor on it.
+    }
+  }, []);
+
   const loadDocument = useCallback(
     async (id: string) => {
       if (!editor) {
@@ -1586,6 +1606,7 @@ export default function DocApp() {
         const existing = await refreshDocs();
         void refreshTrash();
         void refreshTasks();
+        void refreshShared();
         if (existing.length > 0) {
           await loadDocument(existing[0].id);
         } else {
@@ -1600,7 +1621,15 @@ export default function DocApp() {
     };
 
     void boot();
-  }, [createDocument, editor, loadDocument, refreshDocs, refreshTasks, refreshTrash]);
+  }, [
+    createDocument,
+    editor,
+    loadDocument,
+    refreshDocs,
+    refreshShared,
+    refreshTasks,
+    refreshTrash,
+  ]);
 
   useEffect(
     () => () => {
@@ -1799,6 +1828,48 @@ export default function DocApp() {
       await loadDocument(doc.id);
     },
     [loadDocument, refreshTrash],
+  );
+
+  const publishActive = useCallback(async () => {
+    const id = activeIdRef.current;
+    if (!id) {
+      return;
+    }
+    const alreadyShared = sharedDocs.some((doc) => doc.sharedId === id);
+    const confirmed = window.confirm(
+      alreadyShared
+        ? "Update the shared copy of this document?"
+        : "Publish this document to the shared folder? Commit and push to share it with others.",
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    const response = await fetch(`/api/docs/${id}/publish`, { method: "POST" });
+    if (!response.ok) {
+      setSaveState("error");
+      return;
+    }
+    await refreshShared();
+  }, [refreshShared, sharedDocs]);
+
+  const importShared = useCallback(
+    async (sharedId: string) => {
+      const response = await fetch(`/api/shared/${sharedId}/import`, {
+        method: "POST",
+      });
+      if (!response.ok) {
+        setSaveState("error");
+        return;
+      }
+      // Import always creates a brand-new local doc; it never overwrites.
+      const doc = (await response.json()) as StoredDoc;
+      setDocs((current) =>
+        sortDocs([docSummary(doc), ...current.filter((d) => d.id !== doc.id)]),
+      );
+      await loadDocument(doc.id);
+    },
+    [loadDocument],
   );
 
   const purgeTrashDoc = useCallback(
@@ -2166,6 +2237,39 @@ export default function DocApp() {
             </div>
           </section>
 
+          {sharedDocs.length > 0 && (
+            <section className="shared-panel" aria-label="Shared documents">
+              <div className="sidebar-section-heading">
+                <Share2 size={14} strokeWidth={2.2} />
+                <span>Shared</span>
+                <span className="section-count">{sharedDocs.length}</span>
+              </div>
+
+              <div className="shared-list" aria-label="Shared documents">
+                {sharedDocs.map((doc) => (
+                  <div className="shared-row" key={doc.sharedId}>
+                    <div className="shared-row-main">
+                      <span className="shared-row-title">{doc.title}</span>
+                      <span className="shared-row-date">
+                        Shared {formatDate(doc.publishedAt)}
+                      </span>
+                    </div>
+                    <button
+                      aria-label={`Import ${doc.title} as a new doc`}
+                      className="shared-import"
+                      onClick={() => void importShared(doc.sharedId)}
+                      title="Import as a new document"
+                      type="button"
+                    >
+                      <Download size={14} />
+                      Import
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+
           {trashedDocs.length > 0 && (
             <section className="trash-panel" aria-label="Trash">
               <div className="sidebar-section-heading">
@@ -2278,6 +2382,29 @@ export default function DocApp() {
 
           <div className="header-actions">
             {saveState === "saving" && <Loader2 className="spin" size={18} />}
+            <button
+              aria-label={
+                activeDoc && sharedDocs.some((doc) => doc.sharedId === activeDoc.id)
+                  ? "Update shared copy"
+                  : "Publish to shared folder"
+              }
+              className={classNames(
+                "icon-button publish-button",
+                activeDoc &&
+                  sharedDocs.some((doc) => doc.sharedId === activeDoc.id) &&
+                  "is-active",
+              )}
+              disabled={!activeId}
+              onClick={() => void publishActive()}
+              title={
+                activeDoc && sharedDocs.some((doc) => doc.sharedId === activeDoc.id)
+                  ? "Update shared copy"
+                  : "Publish to shared folder"
+              }
+              type="button"
+            >
+              <Share2 size={18} />
+            </button>
             <div className="history-control">
               <button
                 aria-label="Version history"
