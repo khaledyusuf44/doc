@@ -835,6 +835,65 @@ button {
   text-align: center;
 }
 
+.task-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+}
+
+.task-meta {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+
+.task-pill {
+  align-items: center;
+  background: var(--panel-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  color: var(--muted-strong);
+  display: inline-flex;
+  font-size: 11px;
+  font-weight: 600;
+  gap: 3px;
+  line-height: 1;
+  padding: 3px 8px;
+  white-space: nowrap;
+}
+
+.task-due.is-overdue {
+  background: #fbe9e9;
+  border-color: #f0c9c9;
+  color: #b91c1c;
+}
+
+.task-priority.prio-high {
+  background: #fdeaea;
+  border-color: #f3cfcf;
+  color: #c2410c;
+}
+
+.task-priority.prio-med {
+  background: #fdf3e7;
+  border-color: #f1ddc2;
+  color: #b45309;
+}
+
+.task-priority.prio-low {
+  background: #eef3ee;
+  border-color: #d8e3d8;
+  color: #4b7553;
+}
+
+.task-assignee {
+  background: var(--accent-soft);
+  border-color: #cdddfb;
+  color: var(--accent);
+}
+
 .sidebar-section-heading {
   align-items: center;
   color: var(--muted-strong);

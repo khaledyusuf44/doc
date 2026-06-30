@@ -35,6 +35,7 @@ import {
   Bold,
   BookOpen,
   Brush,
+  CalendarDays,
   CheckSquare,
   Clock3,
   Code2,
@@ -76,6 +77,7 @@ import {
   Trash2,
   Underline as UnderlineIcon,
   Undo2,
+  UserRound,
   X,
   type LucideIcon,
 } from "lucide-react";
@@ -118,10 +120,15 @@ type DocVersion = {
   title: string;
 };
 
+type TaskPriority = "low" | "med" | "high";
+
 type Task = {
   text: string;
   checked: boolean;
   index: number;
+  dueDate: string | null;
+  priority: TaskPriority | null;
+  assignee: string | null;
 };
 
 type DocTasks = {
@@ -259,6 +266,27 @@ function formatDate(value: string) {
     hour: "numeric",
     minute: "2-digit",
   }).format(new Date(value));
+}
+
+const PRIORITY_LABEL: Record<TaskPriority, string> = {
+  low: "Low",
+  med: "Med",
+  high: "High",
+};
+
+function formatDueDate(value: string) {
+  const date = new Date(`${value}T00:00:00`);
+  if (Number.isNaN(date.getTime())) {
+    return value;
+  }
+  return new Intl.DateTimeFormat(undefined, {
+    month: "short",
+    day: "numeric",
+  }).format(date);
+}
+
+function isOverdue(dueDate: string) {
+  return dueDate < new Date().toISOString().slice(0, 10);
 }
 
 function docSummary(doc: StoredDoc): DocMeta {
@@ -2372,9 +2400,46 @@ export default function DocApp() {
                             <Square size={15} />
                           )}
                         </button>
-                        <span className="task-text">
-                          {task.text || "Untitled task"}
-                        </span>
+                        <div className="task-body">
+                          <span className="task-text">
+                            {task.text || "Untitled task"}
+                          </span>
+                          {(task.dueDate ||
+                            task.priority ||
+                            task.assignee) && (
+                            <span className="task-meta">
+                              {task.dueDate && (
+                                <span
+                                  className={classNames(
+                                    "task-pill task-due",
+                                    !task.checked &&
+                                      isOverdue(task.dueDate) &&
+                                      "is-overdue",
+                                  )}
+                                >
+                                  <CalendarDays size={12} />
+                                  {formatDueDate(task.dueDate)}
+                                </span>
+                              )}
+                              {task.priority && (
+                                <span
+                                  className={classNames(
+                                    "task-pill task-priority",
+                                    `prio-${task.priority}`,
+                                  )}
+                                >
+                                  {PRIORITY_LABEL[task.priority]}
+                                </span>
+                              )}
+                              {task.assignee && (
+                                <span className="task-pill task-assignee">
+                                  <UserRound size={12} />
+                                  {task.assignee}
+                                </span>
+                              )}
+                            </span>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
